@@ -1,2 +1,10 @@
 *.md
 !README.md
+
+# Binaries & build artifacts
+bin/
+back/asciirender
+back/video-ascii
+*.exe
+*.test
+*.out
