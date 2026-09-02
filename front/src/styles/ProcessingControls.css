@@ -1,0 +1,82 @@
+.stream-controls {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.stream-controls > div {
+  margin-bottom: 22px;
+}
+
+.stream-controls label {
+  display: block;
+  margin-bottom: 8px;
+  color: #888;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.stream-controls .p-select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #111;
+}
+
+.stream-controls .p-select:hover{
+  border-color: #555;
+}
+
+.stream-controls .p-select-label{
+  color: #ccc;
+  font-family: monospace;
+}
+
+.stream-controls .p-button {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.stream-controls .p-select-dropdown{
+  color: #777;
+}
+
+.error-message {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  background: #ffe5e5;
+  color: #b00020;
+}
+
+.selected-file {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #111;
+}
+
+.selected-file p {
+  margin: 5px 0;
+}
+
+.selected-file small {
+  color: #e0e0e0;
+}
+
+.file-info {
+  color: #e0e0e0;
+}
+.file-info p {
+  margin: 4px 0;
+  color: #e0e0e0;
+}
+
+.file-info p:first-child {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
