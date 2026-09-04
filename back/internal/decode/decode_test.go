@@ -88,3 +88,30 @@ func TestDecodeFile(t *testing.T) {
 		t.Error("expected error for non-existent file, got nil")
 	}
 }
+
+func TestParseRationalFPS(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    float64
+		wantErr bool
+	}{
+		{"24/1", 24.0, false},
+		{"30000/1001", 29.97002997002997, false},
+		{"25/1", 25.0, false},
+		{"0/0", 0, true},
+		{"abc/1", 0, true},
+		{"notaration", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseRationalFPS(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseRationalFPS(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if !tt.wantErr && (got < tt.want-0.001 || got > tt.want+0.001) {
+				t.Errorf("parseRationalFPS(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
