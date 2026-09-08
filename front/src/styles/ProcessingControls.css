@@ -24,23 +24,59 @@
   border: 1px solid #333;
   border-radius: 8px;
   background: #111;
+
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 }
 
-.stream-controls .p-select:hover{
-  border-color: #555;
+.stream-controls .p-select:hover {
+  border-color: #4d7057;
+  background: #141914;
 }
 
-.stream-controls .p-select-label{
-  color: #ccc;
+.stream-controls .p-select-label {
+  color: #aaa;
   font-family: monospace;
+  font-size: 13px;
 }
 
 .stream-controls .p-button {
   width: 100%;
-  margin-top: 4px;
+  margin-top: 8px;
+  min-height: 48px;
+  border: 1px solid #3f6f4f;
+  border-radius: 8px;
+  background: #101812;
+  color: #8fca9f;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
-.stream-controls .p-select-dropdown{
+.stream-controls .p-button:hover {
+  background: #16241a;
+  border-color: #63a878;
+  color: #b8e6c3;
+
+  box-shadow:
+    0 0 12px rgba(80, 170, 100, 0.15),
+    inset 0 0 12px rgba(80, 170, 100, 0.05);
+  transform: translateY(-1px);
+}
+
+.stream-controls .p-button:active {
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+.stream-controls .p-select-dropdown {
   color: #777;
 }
 
@@ -79,4 +115,46 @@
 .file-info p:first-child {
   margin-bottom: 8px;
   font-weight: 600;
+}
+
+.stream-controls .p-fileupload-choose {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #111;
+  color: #aaa;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+
+  transition:
+    background 0.3 ease,
+    border-color 0.3s ease,
+    color 0.3s ease;
+}
+
+.stream-controls .p-fileupload-choose:hover {
+  background: #161616;
+  border-color: #4d7057;
+  color: #9ac9a6;
+}
+
+.stream-controls .p-select-overlay {
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #111;
+}
+
+.stream-controls .p-select-option {
+  color: #aaa;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.stream-controls .p-select-option:hover {
+  background: #16241a;
+  color: #9ac9a6;
 }
