@@ -7,6 +7,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"syscall"
 
 	"github.com/GioTld/video-ascii/internal/api"
 	"github.com/GioTld/video-ascii/internal/ascii"
@@ -42,15 +47,12 @@ func runServe(args []string) {
 func runCLI(args []string) {
 	fs := flag.NewFlagSet("asciirender", flag.ExitOnError)
 	width := fs.Int("width", 80, "target output width in characters")
-	height := fs.Int("height", 0, "target output height in characters (0 for auto aspect ratio)")
-	ramp := fs.String("ramp", "", "custom character ramp string (light to dark)")
-	outputPath := fs.String("output", "", "output file path (default standard output)")
+	height := fs.Int("height", 0, "target output height in characters (0 = auto)")
+	ramp := fs.String("ramp", "", "custom character ramp (light to dark)")
+	outputPath := fs.String("output", "", "output file path (default: stdout)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of asciirender:\n")
-		fmt.Fprintf(os.Stderr, "  asciirender [options] <image-path>\n")
-		fmt.Fprintf(os.Stderr, "  asciirender serve [options]\n\n")
-		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n  asciirender [opciones] <ruta-archivo>\n  asciirender serve [opciones]\n\nOpciones:\n")
 		fs.PrintDefaults()
 	}
 
@@ -63,45 +65,157 @@ func runCLI(args []string) {
 		os.Exit(1)
 	}
 
-	imagePath := fs.Arg(0)
+	inputPath := fs.Arg(0)
 
-	frm, err := decode.DecodeFile(imagePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error decoding image: %v\n", err)
-		os.Exit(1)
+	if strings.ToLower(filepath.Ext(inputPath)) == ".mp4" {
+		if err := runVideo(inputPath, *width, *height, *ramp); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
-	resized, err := frm.Resize(*width, *height, 0.5)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resizing frame: %v\n", err)
+	if err := runImage(inputPath, *width, *height, *ramp, *outputPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
 
-	conv, err := ascii.NewConverter(*ramp)
+func runImage(path string, width, height int, ramp, outputPath string) error {
+	frm, err := decode.DecodeFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating ascii converter: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("decode image: %w", err)
+	}
+
+	resized, err := frm.Resize(width, height, 0.5)
+	if err != nil {
+		return fmt.Errorf("resize: %w", err)
+	}
+
+	conv, err := ascii.NewConverter(ramp)
+	if err != nil {
+		return fmt.Errorf("ascii converter: %w", err)
 	}
 
 	lines, err := conv.ConvertFrame(resized)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error converting frame to ascii: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("convert to ascii: %w", err)
 	}
 
 	var out io.Writer = os.Stdout
-	if *outputPath != "" {
-		f, err := os.Create(*outputPath)
+	if outputPath != "" {
+		f, err := os.Create(outputPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("create output file: %w", err)
 		}
 		defer f.Close()
 		out = f
 	}
 
-	if err := render.RenderImage(out, lines); err != nil {
-		fmt.Fprintf(os.Stderr, "Error rendering output: %v\n", err)
-		os.Exit(1)
+	return render.RenderImage(out, lines)
+}
+
+func runVideo(path string, width, height int, ramp string) error {
+	meta, err := decode.ProbeVideo(path)
+	if err != nil {
+		return fmt.Errorf("probe video: %w", err)
+	}
+
+	conv, err := ascii.NewConverter(ramp)
+	if err != nil {
+		return fmt.Errorf("ascii converter: %w", err)
+	}
+
+	// Modo raw para leer teclas sin esperar Enter.
+	restoreTerminal, err := render.EnableRawMode()
+	if err != nil {
+		return fmt.Errorf("enable raw mode: %w", err)
+	}
+	defer restoreTerminal()
+
+	cancel := make(chan struct{})
+	var paused atomic.Bool
+
+	// Capturar Ctrl+C y SIGTERM para restaurar el terminal antes de salir.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		close(cancel)
+	}()
+
+	// Leer teclas en segundo plano.
+	go readKeys(cancel, &paused)
+
+	rawFrames, errc := decode.DecodeVideo(path, cancel)
+
+	// Canal con buffer pequeño para que decode y render corran en paralelo.
+	asciiFrames := make(chan []string, 4)
+
+	go func() {
+		defer close(asciiFrames)
+		for f := range rawFrames {
+			resized, err := f.Resize(width, height, 0.5)
+			if err != nil {
+				continue
+			}
+			lines, err := conv.ConvertFrame(resized)
+			if err != nil {
+				continue
+			}
+			select {
+			case asciiFrames <- lines:
+			case <-cancel:
+				return
+			}
+		}
+	}()
+
+	opts := render.PlaybackOptions{
+		FPS:    meta.FPS,
+		Width:  width,
+		Height: height,
+	}
+
+	if err := render.PlayVideo(os.Stdout, asciiFrames, opts, cancel, &paused); err != nil {
+		return fmt.Errorf("playback: %w", err)
+	}
+
+	if err := <-errc; err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+
+	return nil
+}
+
+// readKeys lee teclas de stdin y actúa sobre ellas:
+//
+//	espacio → pausa / reanuda
+//	q / Q / Ctrl+C → cierra cancel
+func readKeys(cancel chan struct{}, paused *atomic.Bool) {
+	buf := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		switch buf[0] {
+		case ' ':
+			paused.Store(!paused.Load())
+		case 'q', 'Q', 3: // 3 = Ctrl+C
+			select {
+			case <-cancel:
+			default:
+				close(cancel)
+			}
+			return
+		}
+
+		// Salir si el canal ya fue cerrado por otra goroutine.
+		select {
+		case <-cancel:
+			return
+		default:
+		}
 	}
 }
