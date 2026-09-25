@@ -35,3 +35,22 @@ func EnableRawMode() (restore func(), err error) {
 			uintptr(fd), syscall.TCSETS, uintptr(unsafe.Pointer(&old)))
 	}, nil
 }
+
+type winsize struct {
+	Row    uint16
+	Col    uint16
+	Xpixel uint16
+	Ypixel uint16
+}
+
+// GetTerminalSize consulta las dimensiones (columnas y filas) actuales de la terminal.
+func GetTerminalSize() (width, height int, err error) {
+	var ws winsize
+	fd := int(os.Stdout.Fd())
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	if errno != 0 || ws.Col == 0 || ws.Row == 0 {
+		return 80, 24, fmt.Errorf("get terminal dimensions: %w", errno)
+	}
+	return int(ws.Col), int(ws.Row), nil
+}
+
