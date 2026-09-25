@@ -16,6 +16,7 @@ import (
 	"github.com/GioTld/video-ascii/internal/api"
 	"github.com/GioTld/video-ascii/internal/ascii"
 	"github.com/GioTld/video-ascii/internal/decode"
+	"github.com/GioTld/video-ascii/internal/filter"
 	"github.com/GioTld/video-ascii/internal/render"
 )
 
@@ -50,6 +51,7 @@ func runCLI(args []string) {
 	height := fs.Int("height", 0, "target output height in characters (0 = auto)")
 	ramp := fs.String("ramp", "", "custom character ramp (light to dark)")
 	outputPath := fs.String("output", "", "output file path (default: stdout)")
+	filterFlag := fs.String("filter", "", "comma-separated filters: brightness=1.2, contrast=1.2, sepia, invert, matrix, grayscale, edge")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage:\n  asciirender [opciones] <ruta-archivo>\n  asciirender serve [opciones]\n\nOpciones:\n")
@@ -65,23 +67,29 @@ func runCLI(args []string) {
 		os.Exit(1)
 	}
 
+	filterFn, err := filter.Parse(*filterFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing filters: %v\n", err)
+		os.Exit(1)
+	}
+
 	inputPath := fs.Arg(0)
 
 	if strings.ToLower(filepath.Ext(inputPath)) == ".mp4" {
-		if err := runVideo(inputPath, *width, *height, *ramp); err != nil {
+		if err := runVideo(inputPath, *width, *height, *ramp, filterFn); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	if err := runImage(inputPath, *width, *height, *ramp, *outputPath); err != nil {
+	if err := runImage(inputPath, *width, *height, *ramp, *outputPath, filterFn); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runImage(path string, width, height int, ramp, outputPath string) error {
+func runImage(path string, width, height int, ramp, outputPath string, filterFn filter.Func) error {
 	frm, err := decode.DecodeFile(path)
 	if err != nil {
 		return fmt.Errorf("decode image: %w", err)
@@ -90,6 +98,10 @@ func runImage(path string, width, height int, ramp, outputPath string) error {
 	resized, err := frm.Resize(width, height, 0.5)
 	if err != nil {
 		return fmt.Errorf("resize: %w", err)
+	}
+
+	if filterFn != nil {
+		resized = filterFn(resized)
 	}
 
 	conv, err := ascii.NewConverter(ramp)
@@ -115,7 +127,7 @@ func runImage(path string, width, height int, ramp, outputPath string) error {
 	return render.RenderImage(out, lines)
 }
 
-func runVideo(path string, width, height int, ramp string) error {
+func runVideo(path string, width, height int, ramp string, filterFn filter.Func) error {
 	meta, err := decode.ProbeVideo(path)
 	if err != nil {
 		return fmt.Errorf("probe video: %w", err)
@@ -126,7 +138,6 @@ func runVideo(path string, width, height int, ramp string) error {
 		return fmt.Errorf("ascii converter: %w", err)
 	}
 
-	// Modo raw para leer teclas sin esperar Enter.
 	restoreTerminal, err := render.EnableRawMode()
 	if err != nil {
 		return fmt.Errorf("enable raw mode: %w", err)
@@ -136,7 +147,6 @@ func runVideo(path string, width, height int, ramp string) error {
 	cancel := make(chan struct{})
 	var paused atomic.Bool
 
-	// Capturar Ctrl+C y SIGTERM para restaurar el terminal antes de salir.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -144,12 +154,10 @@ func runVideo(path string, width, height int, ramp string) error {
 		close(cancel)
 	}()
 
-	// Leer teclas en segundo plano.
 	go readKeys(cancel, &paused)
 
 	rawFrames, errc := decode.DecodeVideo(path, cancel)
 
-	// Canal con buffer pequeño para que decode y render corran en paralelo.
 	asciiFrames := make(chan []string, 4)
 
 	go func() {
@@ -158,6 +166,9 @@ func runVideo(path string, width, height int, ramp string) error {
 			resized, err := f.Resize(width, height, 0.5)
 			if err != nil {
 				continue
+			}
+			if filterFn != nil {
+				resized = filterFn(resized)
 			}
 			lines, err := conv.ConvertFrame(resized)
 			if err != nil {
@@ -188,10 +199,6 @@ func runVideo(path string, width, height int, ramp string) error {
 	return nil
 }
 
-// readKeys lee teclas de stdin y actúa sobre ellas:
-//
-//	espacio → pausa / reanuda
-//	q / Q / Ctrl+C → cierra cancel
 func readKeys(cancel chan struct{}, paused *atomic.Bool) {
 	buf := make([]byte, 1)
 	for {
@@ -202,7 +209,7 @@ func readKeys(cancel chan struct{}, paused *atomic.Bool) {
 		switch buf[0] {
 		case ' ':
 			paused.Store(!paused.Load())
-		case 'q', 'Q', 3: // 3 = Ctrl+C
+		case 'q', 'Q', 3:
 			select {
 			case <-cancel:
 			default:
@@ -211,7 +218,6 @@ func readKeys(cancel chan struct{}, paused *atomic.Bool) {
 			return
 		}
 
-		// Salir si el canal ya fue cerrado por otra goroutine.
 		select {
 		case <-cancel:
 			return
