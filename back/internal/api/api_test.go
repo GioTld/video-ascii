@@ -94,4 +94,30 @@ func TestServer_RenderImage(t *testing.T) {
 			t.Error("response body is empty")
 		}
 	})
+
+
+	t.Run("valid image with filter parameter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/render/image?width=10&filter=invert", bytes.NewReader(pngData))
+		rec := httptest.NewRecorder()
+
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+		}
+		if rec.Body.Len() == 0 {
+			t.Error("response body is empty")
+		}
+	})
+
+	t.Run("invalid filter query param", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/render/image?width=10&filter=nonexistent", bytes.NewReader(pngData))
+		rec := httptest.NewRecorder()
+
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
 }
+
+

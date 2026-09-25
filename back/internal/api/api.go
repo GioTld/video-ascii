@@ -11,6 +11,7 @@ import (
 
 	"github.com/GioTld/video-ascii/internal/ascii"
 	"github.com/GioTld/video-ascii/internal/decode"
+	"github.com/GioTld/video-ascii/internal/filter"
 	"github.com/GioTld/video-ascii/internal/render"
 )
 
@@ -77,6 +78,16 @@ func (s *Server) handleRenderImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filterParam := r.URL.Query().Get("filter")
+	filterFn, err := filter.Parse(filterParam)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid filter parameter: %v", err), http.StatusBadRequest)
+		return
+	}
+	if filterFn != nil {
+		resized = filterFn(resized)
+	}
+
 	conv, err := ascii.NewConverter("")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to initialize ascii converter: %v", err), http.StatusInternalServerError)
@@ -122,6 +133,13 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	height := parseIntParam(r, "height", 0)
 
+	filterParam := r.URL.Query().Get("filter")
+	filterFn, err := filter.Parse(filterParam)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid filter parameter: %v", err), http.StatusBadRequest)
+		return
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -166,6 +184,9 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		if filterFn != nil {
+			resized = filterFn(resized)
+		}
 		lines, err := conv.ConvertFrame(resized)
 		if err != nil {
 			continue
@@ -191,6 +212,7 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
 
 // parseIntParam lee un parámetro entero de la query string; si falta o es
 // inválido devuelve el valor por defecto.
