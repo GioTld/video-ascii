@@ -106,3 +106,47 @@ func (f *Frame) Resize(targetWidth, targetHeight int, fontAspectRatio float64) (
 		Pixels: pixels,
 	}, nil
 }
+
+// FitMode define cómo se ajusta una imagen a las dimensiones del contenedor de la terminal.
+type FitMode string
+
+const (
+	// FitModeContain escala la imagen para que quepa completamente en la pantalla (Letterbox).
+	FitModeContain FitMode = "contain"
+	// FitModeCover escala la imagen para llenar toda la pantalla, recortando bordes sobrantes (Zoom to Fill).
+	FitModeCover FitMode = "cover"
+)
+
+// Crop recorta un sub-rectángulo del ResizedFrame a partir de (x, y) de dimensiones w x h.
+func (rf *ResizedFrame) Crop(x, y, w, h int) *ResizedFrame {
+	if rf == nil {
+		return nil
+	}
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	if x+w > rf.Width {
+		w = rf.Width - x
+	}
+	if y+h > rf.Height {
+		h = rf.Height - y
+	}
+	if w <= 0 || h <= 0 {
+		return rf
+	}
+	cropped := make([][]color.Color, h)
+	for cy := 0; cy < h; cy++ {
+		cropped[cy] = make([]color.Color, w)
+		for cx := 0; cx < w; cx++ {
+			cropped[cy][cx] = rf.Pixels[y+cy][x+cx]
+		}
+	}
+	return &ResizedFrame{
+		Width:  w,
+		Height: h,
+		Pixels: cropped,
+	}
+}

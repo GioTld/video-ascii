@@ -103,3 +103,24 @@ func TestFrameResize(t *testing.T) {
 		})
 	}
 }
+
+func TestResizedFrame_Crop(t *testing.T) {
+	pixels := make([][]color.Color, 10)
+	for y := range pixels {
+		pixels[y] = make([]color.Color, 10)
+		for x := range pixels[y] {
+			pixels[y][x] = color.RGBA{R: uint8(x * 10), G: uint8(y * 10), B: 0, A: 255}
+		}
+	}
+	rf := &ResizedFrame{Width: 10, Height: 10, Pixels: pixels}
+	cropped := rf.Crop(2, 2, 4, 4)
+	if cropped.Width != 4 || cropped.Height != 4 {
+		t.Fatalf("Crop dimensions = %dx%d, want 4x4", cropped.Width, cropped.Height)
+	}
+	// Pixel en (0,0) del recortado debe corresponder a (2,2) del original
+	c := cropped.Pixels[0][0].(color.RGBA)
+	if c.R != 20 || c.G != 20 {
+		t.Errorf("Cropped (0,0) = {R:%d G:%d}, want {R:20 G:20}", c.R, c.G)
+	}
+}
+

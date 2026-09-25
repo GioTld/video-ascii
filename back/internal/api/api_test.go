@@ -95,6 +95,19 @@ func TestServer_RenderImage(t *testing.T) {
 		}
 	})
 
+	t.Run("valid image body with color=true and custom ramp", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/render/image?width=10&color=true&ramp=@#", bytes.NewReader(pngData))
+		rec := httptest.NewRecorder()
+
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+		}
+
+		if !bytes.Contains(rec.Body.Bytes(), []byte("\033[38;2;")) {
+			t.Errorf("expected 24bit ANSI escape code in body, got %q", rec.Body.String())
+		}
+	})
 
 	t.Run("valid image with filter parameter", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/render/image?width=10&filter=invert", bytes.NewReader(pngData))
