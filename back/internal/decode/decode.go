@@ -2,6 +2,7 @@ package decode
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -11,10 +12,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/GioTld/video-ascii/internal/frame"
+	"github.com/GioTld/video-ascii/internal/subtitle"
 )
 
 // DecodeImage decodes an image from an io.Reader into a Frame.
@@ -47,20 +50,20 @@ func DecodeFile(path string) (*frame.Frame, error) {
 	return DecodeImage(f)
 }
 
-// VideoMeta holds timing information extracted from an MP4 file.
+// VideoMeta holds timing information and stream capabilities extracted from an MP4 file.
 type VideoMeta struct {
-	FPS    float64
-	Width  int
-	Height int
+	FPS      float64
+	Width    int
+	Height   int
+	HasAudio bool
 }
 
-// ProbeVideo uses ffprobe to extract frame rate and resolution from an MP4 file.
+// ProbeVideo uses ffprobe to extract frame rate, resolution, and audio presence from an MP4 file.
 func ProbeVideo(path string) (VideoMeta, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
 		"-print_format", "json",
 		"-show_streams",
-		"-select_streams", "v:0",
 		path,
 	)
 
@@ -71,6 +74,7 @@ func ProbeVideo(path string) (VideoMeta, error) {
 
 	var result struct {
 		Streams []struct {
+			CodecType  string `json:"codec_type"`
 			Width      int    `json:"width"`
 			Height     int    `json:"height"`
 			RFrameRate string `json:"r_frame_rate"`
@@ -81,24 +85,40 @@ func ProbeVideo(path string) (VideoMeta, error) {
 		return VideoMeta{}, fmt.Errorf("parse ffprobe output: %w", err)
 	}
 
-	if len(result.Streams) == 0 {
+	var videoStream *struct {
+		CodecType  string `json:"codec_type"`
+		Width      int    `json:"width"`
+		Height     int    `json:"height"`
+		RFrameRate string `json:"r_frame_rate"`
+	}
+	hasAudio := false
+
+	for i := range result.Streams {
+		st := &result.Streams[i]
+		if st.CodecType == "video" && videoStream == nil {
+			videoStream = st
+		} else if st.CodecType == "audio" {
+			hasAudio = true
+		}
+	}
+
+	if videoStream == nil {
 		return VideoMeta{}, fmt.Errorf("no video stream found in %q", path)
 	}
 
-	s := result.Streams[0]
-	fps, err := parseRationalFPS(s.RFrameRate)
+	fps, err := parseRationalFPS(videoStream.RFrameRate)
 	if err != nil {
-		return VideoMeta{}, fmt.Errorf("parse frame rate %q: %w", s.RFrameRate, err)
+		return VideoMeta{}, fmt.Errorf("parse frame rate %q: %w", videoStream.RFrameRate, err)
 	}
 
 	return VideoMeta{
-		FPS:    fps,
-		Width:  s.Width,
-		Height: s.Height,
+		FPS:      fps,
+		Width:    videoStream.Width,
+		Height:   videoStream.Height,
+		HasAudio: hasAudio,
 	}, nil
 }
 
-// parseRationalFPS convierte "num/den" (formato de ffprobe) a float64.
 func parseRationalFPS(r string) (float64, error) {
 	parts := strings.SplitN(r, "/", 2)
 	if len(parts) != 2 {
@@ -118,10 +138,13 @@ func parseRationalFPS(r string) (float64, error) {
 	return num / den, nil
 }
 
-// DecodeVideo extrae fotogramas de un archivo MP4 via ffmpeg y los envía por un canal.
-// El canal se cierra cuando ffmpeg termina o el contexto es cancelado.
-// Usar cancel() para detener la extracción antes de que termine.
+// DecodeVideo extracts frames from an MP4 file via ffmpeg starting from 0s and sends them over a channel.
 func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
+	return DecodeVideoFrom(path, 0, cancel)
+}
+
+// DecodeVideoFrom extracts frames from an MP4 file via ffmpeg starting at startSec timestamp.
+func DecodeVideoFrom(path string, startSec float64, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
 	frames := make(chan *frame.Frame)
 	errc := make(chan error, 1)
 
@@ -129,15 +152,13 @@ func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-ch
 		defer close(frames)
 		defer close(errc)
 
-		// ffmpeg emite fotogramas en formato PPM (binario) por stdout.
-		// PPM no necesita parsing de contenedor; cada fotograma es un bloque
-		// "P6\n<w> <h>\n255\n<pixels>", lo que permite leer de forma streaming.
-		cmd := exec.Command("ffmpeg",
-			"-i", path,
-			"-f", "image2pipe",
-			"-vcodec", "ppm",
-			"pipe:1",
-		)
+		args := []string{}
+		if startSec > 0 {
+			args = append(args, "-ss", fmt.Sprintf("%.2f", startSec))
+		}
+		args = append(args, "-i", path, "-f", "image2pipe", "-vcodec", "ppm", "pipe:1")
+
+		cmd := exec.Command("ffmpeg", args...)
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -150,9 +171,7 @@ func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-ch
 			return
 		}
 
-		// stderr de ffmpeg se descarta; solo nos interesa el stream de fotogramas.
 		cmd.Stderr = nil
-
 		reader := bufio.NewReaderSize(stdout, 1<<20)
 
 		for {
@@ -189,7 +208,6 @@ func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-ch
 		}
 
 		if err := cmd.Wait(); err != nil {
-			// ffmpeg retorna código no cero cuando se mata el proceso; ignorar.
 			if cancel != nil {
 				select {
 				case <-cancel:
@@ -204,10 +222,7 @@ func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-ch
 	return frames, errc
 }
 
-// readPPMFrame lee un fotograma PPM (P6) del reader.
-// Retorna io.EOF cuando no hay más datos.
 func readPPMFrame(r *bufio.Reader) (image.Image, error) {
-	// Formato: "P6\n<width> <height>\n255\n<raw rgb bytes>"
 	magic, err := r.ReadString('\n')
 	if err == io.EOF && magic == "" {
 		return nil, io.EOF
@@ -239,7 +254,6 @@ func readPPMFrame(r *bufio.Reader) (image.Image, error) {
 		return nil, fmt.Errorf("unexpected maxval %q", maxLine)
 	}
 
-	// 3 bytes por pixel (R, G, B).
 	buf := make([]byte, w*h*3)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, fmt.Errorf("read pixel data: %w", err)
@@ -259,4 +273,58 @@ func readPPMFrame(r *bufio.Reader) (image.Image, error) {
 	}
 
 	return img, nil
+}
+
+// ExtractEmbeddedSubtitles attempts to extract the first embedded subtitle stream from a video using ffmpeg.
+func ExtractEmbeddedSubtitles(path string) ([]byte, error) {
+	cmd := exec.Command("ffmpeg",
+		"-v", "quiet",
+		"-i", path,
+		"-map", "0:s:0",
+		"-f", "srt",
+		"pipe:1",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("extract embedded subtitles: %w", err)
+	}
+	return out, nil
+}
+
+// LoadSubtitles resolves subtitle entries following the priority order:
+// 1. Explicit subFlag file path.
+// 2. Same-name .srt file in video's directory (e.g. video.mp4 -> video.srt).
+// 3. Embedded subtitle stream extracted from video via ffmpeg.
+func LoadSubtitles(videoPath string, subFlag string) ([]subtitle.Entry, error) {
+	if subFlag != "" {
+		f, err := os.Open(subFlag)
+		if err != nil {
+			return nil, fmt.Errorf("open subtitle file %q: %w", subFlag, err)
+		}
+		defer f.Close()
+		return subtitle.ParseSRT(f)
+	}
+
+	ext := filepath.Ext(videoPath)
+	autoSrtPath := strings.TrimSuffix(videoPath, ext) + ".srt"
+	if _, err := os.Stat(autoSrtPath); err == nil {
+		f, err := os.Open(autoSrtPath)
+		if err == nil {
+			defer f.Close()
+			entries, parseErr := subtitle.ParseSRT(f)
+			if parseErr == nil && len(entries) > 0 {
+				return entries, nil
+			}
+		}
+	}
+
+	embeddedData, err := ExtractEmbeddedSubtitles(videoPath)
+	if err == nil && len(embeddedData) > 0 {
+		entries, parseErr := subtitle.ParseSRT(bytes.NewReader(embeddedData))
+		if parseErr == nil && len(entries) > 0 {
+			return entries, nil
+		}
+	}
+
+	return nil, nil
 }
