@@ -95,12 +95,17 @@ func clamp(v float64) uint8 {
 // y devuelve un nuevo ResizedFrame con los píxeles transformados.
 func mapPixels(f *frame.ResizedFrame, fn func(r, g, b, a uint8) color.RGBA) *frame.ResizedFrame {
 	pixels := make([][]color.Color, f.Height)
+	storage := make([]color.Color, f.Height*f.Width)
 	for y := 0; y < f.Height; y++ {
-		pixels[y] = make([]color.Color, f.Width)
+		pixels[y] = storage[y*f.Width : (y+1)*f.Width]
 		for x := 0; x < f.Width; x++ {
-			r32, g32, b32, a32 := f.Pixels[y][x].RGBA()
-			r, g, b, a := uint8(r32>>8), uint8(g32>>8), uint8(b32>>8), uint8(a32>>8)
-			pixels[y][x] = fn(r, g, b, a)
+			c := f.Pixels[y][x]
+			if rgba, ok := c.(color.RGBA); ok {
+				pixels[y][x] = fn(rgba.R, rgba.G, rgba.B, rgba.A)
+			} else {
+				r32, g32, b32, a32 := c.RGBA()
+				pixels[y][x] = fn(uint8(r32>>8), uint8(g32>>8), uint8(b32>>8), uint8(a32>>8))
+			}
 		}
 	}
 	return &frame.ResizedFrame{Width: f.Width, Height: f.Height, Pixels: pixels}
@@ -189,20 +194,30 @@ func Edge() Func {
 	return func(f *frame.ResizedFrame) *frame.ResizedFrame {
 		// Precalcular luminancias para evitar llamadas RGBA repetidas.
 		lum := make([][]float64, f.Height)
+		lumStorage := make([]float64, f.Height*f.Width)
 		for y := 0; y < f.Height; y++ {
-			lum[y] = make([]float64, f.Width)
+			lum[y] = lumStorage[y*f.Width : (y+1)*f.Width]
 			for x := 0; x < f.Width; x++ {
-				r32, g32, b32, _ := f.Pixels[y][x].RGBA()
-				r8 := float64(r32 >> 8)
-				g8 := float64(g32 >> 8)
-				b8 := float64(b32 >> 8)
-				lum[y][x] = 0.2126*r8 + 0.7152*g8 + 0.0722*b8
+				c := f.Pixels[y][x]
+				if rgba, ok := c.(color.RGBA); ok {
+					r8 := float64(rgba.R)
+					g8 := float64(rgba.G)
+					b8 := float64(rgba.B)
+					lum[y][x] = 0.2126*r8 + 0.7152*g8 + 0.0722*b8
+				} else {
+					r32, g32, b32, _ := c.RGBA()
+					r8 := float64(r32 >> 8)
+					g8 := float64(g32 >> 8)
+					b8 := float64(b32 >> 8)
+					lum[y][x] = 0.2126*r8 + 0.7152*g8 + 0.0722*b8
+				}
 			}
 		}
 
 		pixels := make([][]color.Color, f.Height)
+		storage := make([]color.Color, f.Height*f.Width)
 		for y := 0; y < f.Height; y++ {
-			pixels[y] = make([]color.Color, f.Width)
+			pixels[y] = storage[y*f.Width : (y+1)*f.Width]
 			for x := 0; x < f.Width; x++ {
 				// Coordenadas clamp para bordes del frame.
 				y0 := max(y-1, 0)

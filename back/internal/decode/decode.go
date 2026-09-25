@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/GioTld/video-ascii/internal/frame"
 	"github.com/GioTld/video-ascii/internal/subtitle"
@@ -222,6 +223,26 @@ func DecodeVideoFrom(path string, startSec float64, cancel <-chan struct{}) (<-c
 	return frames, errc
 }
 
+var ppmBufPool sync.Pool
+
+func getPPMBuffer(size int) []byte {
+	v := ppmBufPool.Get()
+	if v == nil {
+		return make([]byte, size)
+	}
+	buf := v.([]byte)
+	if cap(buf) < size {
+		return make([]byte, size)
+	}
+	return buf[:size]
+}
+
+func putPPMBuffer(buf []byte) {
+	if buf != nil {
+		ppmBufPool.Put(buf) //nolint:staticcheck
+	}
+}
+
 func readPPMFrame(r *bufio.Reader) (image.Image, error) {
 	magic, err := r.ReadString('\n')
 	if err == io.EOF && magic == "" {
@@ -254,22 +275,26 @@ func readPPMFrame(r *bufio.Reader) (image.Image, error) {
 		return nil, fmt.Errorf("unexpected maxval %q", maxLine)
 	}
 
-	buf := make([]byte, w*h*3)
+	size := w * h * 3
+	buf := getPPMBuffer(size)
+	defer putPPMBuffer(buf)
+
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, fmt.Errorf("read pixel data: %w", err)
 	}
 
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			i := (y*w + x) * 3
-			img.SetNRGBA(x, y, struct{ R, G, B, A uint8 }{
-				R: buf[i],
-				G: buf[i+1],
-				B: buf[i+2],
-				A: 255,
-			})
-		}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	total := w * h
+	srcIdx := 0
+	dstIdx := 0
+	pix := img.Pix
+	for i := 0; i < total; i++ {
+		pix[dstIdx] = buf[srcIdx]
+		pix[dstIdx+1] = buf[srcIdx+1]
+		pix[dstIdx+2] = buf[srcIdx+2]
+		pix[dstIdx+3] = 255
+		srcIdx += 3
+		dstIdx += 4
 	}
 
 	return img, nil

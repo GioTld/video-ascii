@@ -60,46 +60,187 @@ func (f *Frame) Resize(targetWidth, targetHeight int, fontAspectRatio float64) (
 	bounds := f.Image.Bounds()
 	minX, minY := bounds.Min.X, bounds.Min.Y
 	pixels := make([][]color.Color, targetHeight)
+	storage := make([]color.Color, targetHeight*targetWidth)
 	for y := 0; y < targetHeight; y++ {
-		pixels[y] = make([]color.Color, targetWidth)
-		startY := minY + (y * f.Height / targetHeight)
-		endY := minY + ((y + 1) * f.Height / targetHeight)
-		if endY <= startY {
-			endY = startY + 1
-		}
-		for x := 0; x < targetWidth; x++ {
-			startX := minX + (x * f.Width / targetWidth)
-			endX := minX + ((x + 1) * f.Width / targetWidth)
-			if endX <= startX {
-				endX = startX + 1
+		pixels[y] = storage[y*targetWidth : (y+1)*targetWidth]
+	}
+
+	switch img := f.Image.(type) {
+	case *image.RGBA:
+		pix := img.Pix
+		stride := img.Stride
+		for y := 0; y < targetHeight; y++ {
+			startY := minY + (y * f.Height / targetHeight)
+			endY := minY + ((y + 1) * f.Height / targetHeight)
+			if endY <= startY {
+				endY = startY + 1
 			}
-			var rSum, gSum, bSum, aSum uint64
-			var count uint64
-			for cy := startY; cy < endY; cy++ {
-				for cx := startX; cx < endX; cx++ {
-					r, g, b, a := f.Image.At(cx, cy).RGBA()
-					rSum += uint64(r >> 8)
-					gSum += uint64(g >> 8)
-					bSum += uint64(b >> 8)
-					aSum += uint64(a >> 8)
-					count++
+			for x := 0; x < targetWidth; x++ {
+				startX := minX + (x * f.Width / targetWidth)
+				endX := minX + ((x + 1) * f.Width / targetWidth)
+				if endX <= startX {
+					endX = startX + 1
+				}
+				var rSum, gSum, bSum, aSum uint64
+				var count uint64
+				for cy := startY; cy < endY; cy++ {
+					rowOff := (cy - bounds.Min.Y) * stride
+					for cx := startX; cx < endX; cx++ {
+						idx := rowOff + (cx-bounds.Min.X)*4
+						rSum += uint64(pix[idx])
+						gSum += uint64(pix[idx+1])
+						bSum += uint64(pix[idx+2])
+						aSum += uint64(pix[idx+3])
+						count++
+					}
+				}
+				if count == 0 {
+					idx := (startY-bounds.Min.Y)*stride + (startX-bounds.Min.X)*4
+					rSum = uint64(pix[idx])
+					gSum = uint64(pix[idx+1])
+					bSum = uint64(pix[idx+2])
+					aSum = uint64(pix[idx+3])
+					count = 1
+				}
+				pixels[y][x] = color.RGBA{
+					R: uint8(rSum / count),
+					G: uint8(gSum / count),
+					B: uint8(bSum / count),
+					A: uint8(aSum / count),
 				}
 			}
-			if count == 0 {
-				r, g, b, a := f.Image.At(startX, startY).RGBA()
-				rSum = uint64(r >> 8)
-				gSum = uint64(g >> 8)
-				bSum = uint64(b >> 8)
-				aSum = uint64(a >> 8)
-				count = 1
+		}
+
+	case *image.NRGBA:
+		pix := img.Pix
+		stride := img.Stride
+		for y := 0; y < targetHeight; y++ {
+			startY := minY + (y * f.Height / targetHeight)
+			endY := minY + ((y + 1) * f.Height / targetHeight)
+			if endY <= startY {
+				endY = startY + 1
 			}
-			avgR := uint8(rSum / count)
-			avgG := uint8(gSum / count)
-			avgB := uint8(bSum / count)
-			avgA := uint8(aSum / count)
-			pixels[y][x] = color.RGBA{R: avgR, G: avgG, B: avgB, A: avgA}
+			for x := 0; x < targetWidth; x++ {
+				startX := minX + (x * f.Width / targetWidth)
+				endX := minX + ((x + 1) * f.Width / targetWidth)
+				if endX <= startX {
+					endX = startX + 1
+				}
+				var rSum, gSum, bSum, aSum uint64
+				var count uint64
+				for cy := startY; cy < endY; cy++ {
+					rowOff := (cy - bounds.Min.Y) * stride
+					for cx := startX; cx < endX; cx++ {
+						idx := rowOff + (cx-bounds.Min.X)*4
+						rSum += uint64(pix[idx])
+						gSum += uint64(pix[idx+1])
+						bSum += uint64(pix[idx+2])
+						aSum += uint64(pix[idx+3])
+						count++
+					}
+				}
+				if count == 0 {
+					idx := (startY-bounds.Min.Y)*stride + (startX-bounds.Min.X)*4
+					rSum = uint64(pix[idx])
+					gSum = uint64(pix[idx+1])
+					bSum = uint64(pix[idx+2])
+					aSum = uint64(pix[idx+3])
+					count = 1
+				}
+				pixels[y][x] = color.RGBA{
+					R: uint8(rSum / count),
+					G: uint8(gSum / count),
+					B: uint8(bSum / count),
+					A: uint8(aSum / count),
+				}
+			}
+		}
+
+	case *image.YCbCr:
+		for y := 0; y < targetHeight; y++ {
+			startY := minY + (y * f.Height / targetHeight)
+			endY := minY + ((y + 1) * f.Height / targetHeight)
+			if endY <= startY {
+				endY = startY + 1
+			}
+			for x := 0; x < targetWidth; x++ {
+				startX := minX + (x * f.Width / targetWidth)
+				endX := minX + ((x + 1) * f.Width / targetWidth)
+				if endX <= startX {
+					endX = startX + 1
+				}
+				var rSum, gSum, bSum uint64
+				var count uint64
+				for cy := startY; cy < endY; cy++ {
+					for cx := startX; cx < endX; cx++ {
+						c := img.YCbCrAt(cx, cy)
+						r, g, b := color.YCbCrToRGB(c.Y, c.Cb, c.Cr)
+						rSum += uint64(r)
+						gSum += uint64(g)
+						bSum += uint64(b)
+						count++
+					}
+				}
+				if count == 0 {
+					c := img.YCbCrAt(startX, startY)
+					r, g, b := color.YCbCrToRGB(c.Y, c.Cb, c.Cr)
+					rSum = uint64(r)
+					gSum = uint64(g)
+					bSum = uint64(b)
+					count = 1
+				}
+				pixels[y][x] = color.RGBA{
+					R: uint8(rSum / count),
+					G: uint8(gSum / count),
+					B: uint8(bSum / count),
+					A: 255,
+				}
+			}
+		}
+
+	default:
+		for y := 0; y < targetHeight; y++ {
+			startY := minY + (y * f.Height / targetHeight)
+			endY := minY + ((y + 1) * f.Height / targetHeight)
+			if endY <= startY {
+				endY = startY + 1
+			}
+			for x := 0; x < targetWidth; x++ {
+				startX := minX + (x * f.Width / targetWidth)
+				endX := minX + ((x + 1) * f.Width / targetWidth)
+				if endX <= startX {
+					endX = startX + 1
+				}
+				var rSum, gSum, bSum, aSum uint64
+				var count uint64
+				for cy := startY; cy < endY; cy++ {
+					for cx := startX; cx < endX; cx++ {
+						r, g, b, a := f.Image.At(cx, cy).RGBA()
+						rSum += uint64(r >> 8)
+						gSum += uint64(g >> 8)
+						bSum += uint64(b >> 8)
+						aSum += uint64(a >> 8)
+						count++
+					}
+				}
+				if count == 0 {
+					r, g, b, a := f.Image.At(startX, startY).RGBA()
+					rSum = uint64(r >> 8)
+					gSum = uint64(g >> 8)
+					bSum = uint64(b >> 8)
+					aSum = uint64(a >> 8)
+					count = 1
+				}
+				pixels[y][x] = color.RGBA{
+					R: uint8(rSum / count),
+					G: uint8(gSum / count),
+					B: uint8(bSum / count),
+					A: uint8(aSum / count),
+				}
+			}
 		}
 	}
+
 	return &ResizedFrame{
 		Width:  targetWidth,
 		Height: targetHeight,
@@ -138,11 +279,10 @@ func (rf *ResizedFrame) Crop(x, y, w, h int) *ResizedFrame {
 		return rf
 	}
 	cropped := make([][]color.Color, h)
+	cropStorage := make([]color.Color, h*w)
 	for cy := 0; cy < h; cy++ {
-		cropped[cy] = make([]color.Color, w)
-		for cx := 0; cx < w; cx++ {
-			cropped[cy][cx] = rf.Pixels[y+cy][x+cx]
-		}
+		cropped[cy] = cropStorage[cy*w : (cy+1)*w]
+		copy(cropped[cy], rf.Pixels[y+cy][x:x+w])
 	}
 	return &ResizedFrame{
 		Width:  w,

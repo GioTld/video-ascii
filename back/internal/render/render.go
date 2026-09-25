@@ -5,9 +5,11 @@ import (
 	"image/color"
 	"io"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GioTld/video-ascii/internal/ascii"
 	"github.com/GioTld/video-ascii/internal/frame"
@@ -31,22 +33,62 @@ var RampPresets = []string{
 	" .oO0@",              // minimalista
 }
 
+var (
+	ansi6LUT    [256]int
+	ansiGrayLUT [256]int
+)
+
+func init() {
+	for i := 0; i < 256; i++ {
+		ansi6LUT[i] = int(math.Round(float64(i) / 255.0 * 5.0))
+		if i < 8 {
+			ansiGrayLUT[i] = 16
+		} else if i > 248 {
+			ansiGrayLUT[i] = 231
+		} else {
+			ansiGrayLUT[i] = 232 + int(math.Round(float64(i-8)/247.0*23.0))
+		}
+	}
+}
+
 // RGBToANSI256 mapea un color RGB (0..255) al codigo de color de 8-bit de la paleta ANSI 256.
 func RGBToANSI256(r, g, b uint8) int {
 	if r == g && g == b {
-		if r < 8 {
-			return 16
-		}
-		if r > 248 {
-			return 231
-		}
-		return 232 + int(math.Round(float64(r-8)/247.0*23.0))
+		return ansiGrayLUT[r]
 	}
+	return 16 + (36 * ansi6LUT[r]) + (6 * ansi6LUT[g]) + ansi6LUT[b]
+}
 
-	r6 := int(math.Round(float64(r) / 255.0 * 5.0))
-	g6 := int(math.Round(float64(g) / 255.0 * 5.0))
-	b6 := int(math.Round(float64(b) / 255.0 * 5.0))
-	return 16 + (36 * r6) + (6 * g6) + b6
+func appendColor24BitFg(buf []byte, r, g, b uint8) []byte {
+	buf = append(buf, "\033[38;2;"...)
+	buf = strconv.AppendUint(buf, uint64(r), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(g), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(b), 10)
+	return append(buf, 'm')
+}
+
+func appendColor24BitBg(buf []byte, r, g, b uint8) []byte {
+	buf = append(buf, "\033[48;2;"...)
+	buf = strconv.AppendUint(buf, uint64(r), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(g), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(b), 10)
+	return append(buf, 'm')
+}
+
+func appendColor256Fg(buf []byte, code int) []byte {
+	buf = append(buf, "\033[38;5;"...)
+	buf = strconv.AppendInt(buf, int64(code), 10)
+	return append(buf, 'm')
+}
+
+func appendColor256Bg(buf []byte, code int) []byte {
+	buf = append(buf, "\033[48;5;"...)
+	buf = strconv.AppendInt(buf, int64(code), 10)
+	return append(buf, 'm')
 }
 
 // FormatFrameANSI convierte un CharFrame en lineas de texto aplicando las secuencias de color ANSI especificadas.
@@ -62,53 +104,57 @@ func FormatFrameANSI(frame *ascii.CharFrame, mode ColorMode) []string {
 	}
 
 	lines := make([]string, frame.Height)
+	buf := make([]byte, 0, frame.Width*16)
+
 	for y := 0; y < frame.Height; y++ {
-		var sb strings.Builder
-		var lastFg *color.RGBA
-		var lastBg *color.RGBA
+		buf = buf[:0]
+		var lastFg color.RGBA
+		var hasFg bool
+		var lastBg color.RGBA
+		var hasBg bool
 
 		for x := 0; x < frame.Width; x++ {
 			cell := frame.Cells[y][x]
 
 			switch mode {
 			case ColorMode24Bit:
-				if lastFg == nil || *lastFg != cell.Color {
-					fmt.Fprintf(&sb, "\033[38;2;%d;%d;%dm", cell.Color.R, cell.Color.G, cell.Color.B)
-					c := cell.Color
-					lastFg = &c
+				if !hasFg || lastFg != cell.Color {
+					buf = appendColor24BitFg(buf, cell.Color.R, cell.Color.G, cell.Color.B)
+					lastFg = cell.Color
+					hasFg = true
 				}
-				if cell.BgColor != nil && (lastBg == nil || *lastBg != *cell.BgColor) {
-					fmt.Fprintf(&sb, "\033[48;2;%d;%d;%dm", cell.BgColor.R, cell.BgColor.G, cell.BgColor.B)
-					bg := *cell.BgColor
-					lastBg = &bg
-				} else if cell.BgColor == nil && lastBg != nil {
-					sb.WriteString("\033[49m")
-					lastBg = nil
+				if cell.BgColor != nil && (!hasBg || lastBg != *cell.BgColor) {
+					buf = appendColor24BitBg(buf, cell.BgColor.R, cell.BgColor.G, cell.BgColor.B)
+					lastBg = *cell.BgColor
+					hasBg = true
+				} else if cell.BgColor == nil && hasBg {
+					buf = append(buf, "\033[49m"...)
+					hasBg = false
 				}
 			case ColorMode256:
-				if lastFg == nil || *lastFg != cell.Color {
+				if !hasFg || lastFg != cell.Color {
 					code := RGBToANSI256(cell.Color.R, cell.Color.G, cell.Color.B)
-					fmt.Fprintf(&sb, "\033[38;5;%dm", code)
-					c := cell.Color
-					lastFg = &c
+					buf = appendColor256Fg(buf, code)
+					lastFg = cell.Color
+					hasFg = true
 				}
-				if cell.BgColor != nil && (lastBg == nil || *lastBg != *cell.BgColor) {
+				if cell.BgColor != nil && (!hasBg || lastBg != *cell.BgColor) {
 					code := RGBToANSI256(cell.BgColor.R, cell.BgColor.G, cell.BgColor.B)
-					fmt.Fprintf(&sb, "\033[48;5;%dm", code)
-					bg := *cell.BgColor
-					lastBg = &bg
-				} else if cell.BgColor == nil && lastBg != nil {
-					sb.WriteString("\033[49m")
-					lastBg = nil
+					buf = appendColor256Bg(buf, code)
+					lastBg = *cell.BgColor
+					hasBg = true
+				} else if cell.BgColor == nil && hasBg {
+					buf = append(buf, "\033[49m"...)
+					hasBg = false
 				}
 			}
-			sb.WriteRune(cell.Char)
+			buf = utf8.AppendRune(buf, cell.Char)
 		}
 
-		if lastFg != nil || lastBg != nil {
-			sb.WriteString("\033[0m")
+		if hasFg || hasBg {
+			buf = append(buf, "\033[0m"...)
 		}
-		lines[y] = sb.String()
+		lines[y] = string(buf)
 	}
 	return lines
 }

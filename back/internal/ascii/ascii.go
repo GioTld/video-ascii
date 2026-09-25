@@ -15,6 +15,7 @@ const DefaultRamp = " .:-=+*#%@"
 // Converter mapea los colores de pixeles del frame a caracteres ASCII usando un character ramp.
 type Converter struct {
 	ramp []rune
+	lut  [256]rune
 }
 
 // NewConverter inicializa el Converter con un character ramp.
@@ -27,9 +28,20 @@ func NewConverter(ramp string) (*Converter, error) {
 	if len(runes) == 0 {
 		return nil, fmt.Errorf("character ramp cannot be empty")
 	}
-	return &Converter{
+	c := &Converter{
 		ramp: runes,
-	}, nil
+	}
+	maxIdx := float64(len(runes) - 1)
+	for i := 0; i < 256; i++ {
+		idx := int(math.Round((float64(i) / 255.0) * maxIdx))
+		if idx < 0 {
+			idx = 0
+		} else if idx > int(maxIdx) {
+			idx = int(maxIdx)
+		}
+		c.lut[i] = runes[idx]
+	}
+	return c, nil
 }
 
 // PixelLuminance calcula la iluminacion relativa (0..255) de un color usando los pesos de BT.709.
@@ -82,30 +94,18 @@ func (c *Converter) ConvertFrame(f *frame.ResizedFrame) (*CharFrame, error) {
 	if f.Width <= 0 || f.Height <= 0 || len(f.Pixels) == 0 {
 		return nil, fmt.Errorf("invalid resized frame dimensions")
 	}
-	maxIdx := float64(len(c.ramp) - 1)
 	cells := make([][]Cell, f.Height)
+	cellStorage := make([]Cell, f.Height*f.Width)
 	for y := 0; y < f.Height; y++ {
-		cells[y] = make([]Cell, f.Width)
+		cells[y] = cellStorage[y*f.Width : (y+1)*f.Width]
 		for x := 0; x < f.Width; x++ {
-			pixColor := f.Pixels[y][x]
-			lum := PixelLuminance(pixColor)
-			idx := int(math.Round((lum / 255.0) * maxIdx))
-			if idx < 0 {
-				idx = 0
-			} else if idx > int(maxIdx) {
-				idx = int(maxIdx)
+			rgba := toRGBA(f.Pixels[y][x])
+			lumInt := (54*uint32(rgba.R) + 183*uint32(rgba.G) + 19*uint32(rgba.B)) >> 8
+			if lumInt > 255 {
+				lumInt = 255
 			}
-
-			r, g, b, a := pixColor.RGBA()
-			rgba := color.RGBA{
-				R: uint8(r >> 8),
-				G: uint8(g >> 8),
-				B: uint8(b >> 8),
-				A: uint8(a >> 8),
-			}
-
 			cells[y][x] = Cell{
-				Char:  c.ramp[idx],
+				Char:  c.lut[lumInt],
 				Color: rgba,
 			}
 		}
@@ -133,6 +133,9 @@ const (
 
 // toRGBA convierte un color.Color en color.RGBA con valores 0–255.
 func toRGBA(c color.Color) color.RGBA {
+	if rgba, ok := c.(color.RGBA); ok {
+		return rgba
+	}
 	r, g, b, a := c.RGBA()
 	return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
 }
@@ -162,8 +165,10 @@ func (c *Converter) convertHalfBlock(f *frame.ResizedFrame) *CharFrame {
 		outH = 1
 	}
 	cells := make([][]Cell, outH)
+	cellStorage := make([]Cell, outH*f.Width)
+	bgStorage := make([]color.RGBA, outH*f.Width)
 	for y := 0; y < outH; y++ {
-		cells[y] = make([]Cell, f.Width)
+		cells[y] = cellStorage[y*f.Width : (y+1)*f.Width]
 		yTop := y * 2
 		yBot := yTop + 1
 		for x := 0; x < f.Width; x++ {
@@ -172,10 +177,12 @@ func (c *Converter) convertHalfBlock(f *frame.ResizedFrame) *CharFrame {
 			if yBot < f.Height {
 				bg = toRGBA(f.Pixels[yBot][x])
 			}
+			idx := y*f.Width + x
+			bgStorage[idx] = bg
 			cells[y][x] = Cell{
 				Char:    '▀',
 				Color:   fg,
-				BgColor: &bg,
+				BgColor: &bgStorage[idx],
 			}
 		}
 	}
@@ -204,11 +211,13 @@ func (c *Converter) convertBraille(f *frame.ResizedFrame) *CharFrame {
 		outW = 1
 	}
 	cells := make([][]Cell, outH)
+	cellStorage := make([]Cell, outH*outW)
 	for cy := 0; cy < outH; cy++ {
-		cells[cy] = make([]Cell, outW)
+		cells[cy] = cellStorage[cy*outW : (cy+1)*outW]
 		for cx := 0; cx < outW; cx++ {
 			var mask rune
-			var lit []color.RGBA
+			var lit [8]color.RGBA
+			litCount := 0
 
 			for row := 0; row < 4; row++ {
 				for col := 0; col < 2; col++ {
@@ -218,23 +227,35 @@ func (c *Converter) convertBraille(f *frame.ResizedFrame) *CharFrame {
 						continue
 					}
 					rgba := toRGBA(f.Pixels[py][px])
-					lum := 0.2126*float64(rgba.R) + 0.7152*float64(rgba.G) + 0.0722*float64(rgba.B)
-					if lum > 128 {
+					lumInt := (54*uint32(rgba.R) + 183*uint32(rgba.G) + 19*uint32(rgba.B)) >> 8
+					if lumInt > 128 {
 						mask |= 1 << brailleOffsets[row][col]
-						lit = append(lit, rgba)
+						lit[litCount] = rgba
+						litCount++
 					}
 				}
 			}
 
 			fg := color.RGBA{R: 180, G: 180, B: 180, A: 255}
-			if len(lit) > 0 {
-				fg = avgColor(lit)
+			if litCount > 0 {
+				var rSum, gSum, bSum, aSum int
+				for i := 0; i < litCount; i++ {
+					rSum += int(lit[i].R)
+					gSum += int(lit[i].G)
+					bSum += int(lit[i].B)
+					aSum += int(lit[i].A)
+				}
+				fg = color.RGBA{
+					R: uint8(rSum / litCount),
+					G: uint8(gSum / litCount),
+					B: uint8(bSum / litCount),
+					A: uint8(aSum / litCount),
+				}
 			}
 			cells[cy][cx] = Cell{
 				Char:  0x2800 + mask,
 				Color: fg,
 			}
-			lit = lit[:0]
 		}
 	}
 	return &CharFrame{Width: outW, Height: outH, Cells: cells}

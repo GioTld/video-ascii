@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"bufio"
 	"bytes"
 	"image"
 	"image/color"
@@ -115,3 +116,79 @@ func TestParseRationalFPS(t *testing.T) {
 		})
 	}
 }
+
+func TestReadPPMFrame(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantErr bool
+		wantW   int
+		wantH   int
+	}{
+		{
+			name: "valid 2x2 PPM frame",
+			input: append(
+				[]byte("P6\n2 2\n255\n"),
+				// 4 pixels RGB: Red, Green, Blue, White
+				255, 0, 0,
+				0, 255, 0,
+				0, 0, 255,
+				255, 255, 255,
+			),
+			wantErr: false,
+			wantW:   2,
+			wantH:   2,
+		},
+		{
+			name:    "EOF immediately",
+			input:   []byte(""),
+			wantErr: true,
+		},
+		{
+			name:    "wrong magic P5",
+			input:   []byte("P5\n2 2\n255\n\x00\x00\x00\x00"),
+			wantErr: true,
+		},
+		{
+			name:    "invalid dimensions",
+			input:   []byte("P6\ninvalid\n255\n"),
+			wantErr: true,
+		},
+		{
+			name:    "unexpected maxval",
+			input:   []byte("P6\n2 2\n65535\n"),
+			wantErr: true,
+		},
+		{
+			name:    "truncated pixel data",
+			input:   []byte("P6\n2 2\n255\n\x00\x00"),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := bufio.NewReader(bytes.NewReader(tt.input))
+			img, err := readPPMFrame(r)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("readPPMFrame() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				bounds := img.Bounds()
+				if bounds.Dx() != tt.wantW || bounds.Dy() != tt.wantH {
+					t.Errorf("got dimensions %dx%d, want %dx%d", bounds.Dx(), bounds.Dy(), tt.wantW, tt.wantH)
+				}
+				// Verify first pixel (Red)
+				rgbaImg, ok := img.(*image.RGBA)
+				if !ok {
+					t.Fatalf("expected *image.RGBA, got %T", img)
+				}
+				c := rgbaImg.RGBAAt(0, 0)
+				if c.R != 255 || c.G != 0 || c.B != 0 || c.A != 255 {
+					t.Errorf("pixel (0,0) = %+v, want R=255, G=0, B=0, A=255", c)
+				}
+			}
+		})
+	}
+}
+
