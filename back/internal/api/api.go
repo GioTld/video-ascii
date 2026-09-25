@@ -88,20 +88,23 @@ func (s *Server) handleRenderImage(w http.ResponseWriter, r *http.Request) {
 		resized = filterFn(resized)
 	}
 
-	conv, err := ascii.NewConverter("")
+	ramp := r.URL.Query().Get("ramp")
+	colorMode := parseColorModeParam(r)
+
+	conv, err := ascii.NewConverter(ramp)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to initialize ascii converter: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	lines, err := conv.ConvertFrame(resized)
+	charFrame, err := conv.ConvertFrame(resized)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to convert frame to ascii: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if err := render.RenderImage(w, lines); err != nil {
+	if err := render.RenderImage(w, charFrame, colorMode); err != nil {
 		http.Error(w, fmt.Sprintf("failed to render output: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -132,6 +135,8 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	height := parseIntParam(r, "height", 0)
+	ramp := r.URL.Query().Get("ramp")
+	colorMode := parseColorModeParam(r)
 
 	filterParam := r.URL.Query().Get("filter")
 	filterFn, err := filter.Parse(filterParam)
@@ -152,7 +157,7 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := ascii.NewConverter("")
+	conv, err := ascii.NewConverter(ramp)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to initialize ascii converter: %v", err), http.StatusInternalServerError)
 		return
@@ -187,10 +192,12 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		if filterFn != nil {
 			resized = filterFn(resized)
 		}
-		lines, err := conv.ConvertFrame(resized)
+		charFrame, err := conv.ConvertFrame(resized)
 		if err != nil {
 			continue
 		}
+
+		lines := render.FormatFrameANSI(charFrame, colorMode)
 
 		// Formato SSE: "data: <línea>\n" por cada línea, separado por "\n\n".
 		start := time.Now()
@@ -211,6 +218,21 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func parseColorModeParam(r *http.Request) render.ColorMode {
+	colorStr := r.URL.Query().Get("color")
+	if colorStr == "true" || colorStr == "1" {
+		modeStr := strings.ToLower(r.URL.Query().Get("color_mode"))
+		if modeStr == "" {
+			modeStr = strings.ToLower(r.URL.Query().Get("color-mode"))
+		}
+		if modeStr == "256" {
+			return render.ColorMode256
+		}
+		return render.ColorMode24Bit
+	}
+	return render.ColorModeNone
 }
 
 
