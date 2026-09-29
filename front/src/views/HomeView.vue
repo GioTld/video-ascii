@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, nextTick, watch } from 'vue'
 import TerminalOutput from '@/components/TerminalOutput.vue'
 import { renderImage, uploadVideo, streamVideo } from '@/services/asciiService'
 
@@ -52,11 +52,6 @@ const colorMode = ref<'green' | 'amber' | 'white'>('green')
 const selectedFilter = ref('none')
 let activeStream: EventSource | null = null
 
-const asciiClass = computed(() => {
-  if (colorMode.value === 'amber') return 'ascii-output amber fade-in'
-  if (colorMode.value === 'white') return 'ascii-output white fade-in'
-  return 'ascii-output fade-in'
-})
 
 function addLog(text: string, type: LogType = 'info') {
   log.value = [...log.value.slice(-60), mkLine(text, type)]
@@ -261,15 +256,22 @@ watch([preset, selectedFilter], () => {
       <div class="main">
         <!-- ASCII viewport -->
         <div class="viewport">
-          <div v-if="isProcessing && !asciiContent" class="viewport-status glow-text">
-            processing<span class="cursor" />
+          <!-- Overlay: processing / empty -->
+          <div v-if="isProcessing && !asciiContent" class="viewport-overlay">
+            <span class="glow-text">processing<span class="cursor" /></span>
           </div>
-          <div v-else-if="!asciiContent" class="viewport-empty">
-            <div class="empty-icon">▒░▒</div>
-            <div>no file loaded</div>
-            <div class="empty-hint">use [LOAD FILE] or drop a file here</div>
+          <div v-else-if="!asciiContent" class="viewport-overlay">
+            <div class="viewport-empty">
+              <div class="empty-icon">▒░▒</div>
+              <div>no file loaded</div>
+              <div class="empty-hint">use [LOAD FILE] or drop a file here</div>
+            </div>
           </div>
-          <pre v-else :class="asciiClass">{{ asciiContent }}</pre>
+
+          <!-- xterm.js terminal — always mounted so xterm initializes once -->
+          <div class="terminal-fill" :style="{ visibility: asciiContent ? 'visible' : 'hidden' }">
+            <TerminalOutput :content="asciiContent" />
+          </div>
         </div>
 
         <!-- Log console -->
@@ -410,17 +412,25 @@ watch([preset, selectedFilter], () => {
 /* Viewport */
 .viewport {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   background: var(--bg);
+  position: relative;
+}
+
+.viewport-overlay {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  z-index: 1;
+  font-size: 12px;
+  color: var(--green);
 }
 
-.viewport-status {
-  color: var(--green);
-  font-size: 12px;
+.terminal-fill {
+  position: absolute;
+  inset: 0;
 }
 
 .viewport-empty {
