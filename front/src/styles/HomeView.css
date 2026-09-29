@@ -2,17 +2,20 @@
   max-width: 1200px;
   margin: 0 auto;
   padding: 48px 32px;
+  position: relative;
 }
 
+/* Fondo */
 .home::before {
   content: '';
   position: fixed;
   inset: 0;
-  z-index: 2;
-  background: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px)
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-  background-size: 40px 40px;
+  z-index: -2;
   pointer-events: none;
+  background:
+    linear-gradient(rgba(80, 170, 100, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 170, 100, 0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 .home::after {
@@ -22,11 +25,20 @@
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.06), transparent 45%),
-    radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.025), transparent 35%);
+    radial-gradient(circle at 50% 0%, rgba(80, 170, 100, 0.08), transparent 42%),
+    radial-gradient(circle at 50% 70%, rgba(80, 170, 100, 0.025), transparent 38%);
 }
+
+/* Header */
 .header {
   margin-bottom: 40px;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
 }
 
 .header-title {
@@ -36,62 +48,75 @@
 }
 
 .terminal-prefix {
+  color: #63a878;
   font-family: monospace;
   font-size: 32px;
   font-weight: 700;
-  color: #888;
+  text-shadow: 0 0 14px rgba(80, 170, 100, 0.35);
 }
 
 .header h1 {
   margin: 0;
+  color: #e8e8e8;
   font-size: 44px;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  text-shadow: 0 0 20px rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.08);
 }
 
 .header p {
-  margin-top: 14px;
-  color: #888;
-  font-size: 16px;
-  letter-spacing: 0.3px;
+  margin: 14px 0 0 44px;
+  color: #777;
+  font-family: monospace;
+  font-size: 14px;
+  letter-spacing: 0.5px;
 }
 
 .status {
   padding: 8px 14px;
-  border: 1px solid #333;
+  border: 1px solid #31543c;
   border-radius: 20px;
-  color: #aaa;
-  background: #151515;
+  background: #0d160f;
+  color: #7fb58c;
   font-family: monospace;
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  box-shadow: 0 0 14px rgba(80, 170, 100, 0.06);
 }
 
+/* Layout principal */
 .main-content {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  gap: 24px;
+  gap: 20px;
 }
 
-.preview-section .controls-section .output-section {
-  padding: 24px;
-  border: 1px solid #2d2d2d;
-  border-radius: 14px;
-  background: #181818;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+/* Paneles */
+.preview-section,
+.controls-section,
+.output-section {
+  padding: 22px;
+  border: 1px solid #292f2b;
+  border-radius: 12px;
+  background: rgba(13, 15, 14, 0.92);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .preview-section h2,
 .controls-section h2,
 .output-section h2 {
-  margin-top: 0;
+  margin: 0;
   padding-bottom: 12px;
-  border-bottom: 1px solid #2d2d2d;
-  font-size: 18px;
+  border-bottom: 1px solid #292f2b;
+  color: #c9c9c9;
+  font-family: monospace;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 .preview-section h2::before,
@@ -99,12 +124,13 @@
 .output-section h2::before {
   content: '>';
   margin-right: 8px;
-  color: #777;
+  color: #63a878;
   font-family: monospace;
 }
 
+/* Resultado */
 .output-section {
-  margin-top: 24px;
+  margin-top: 20px;
 }
 
 .output-header {
@@ -115,43 +141,51 @@
 }
 
 .output-status {
-  color: #666;
+  color: #4f6255;
   font-family: monospace;
-  font-size: 11px;
-  letter-spacing: 0.5px;
+  font-size: 10px;
+  letter-spacing: 0.8px;
 }
 
 .ascii-output {
   min-height: 300px;
-  margin-top: 20px;
-  padding: 20px;
-  border: 1px solid #292929;
-  border-radius: 10px;
-  background: #080808;
-  color: #e0e0e0;
+  margin-top: 18px;
+  padding: 0 20px 20px;
+  border: 1px solid #253129;
+  border-radius: 8px;
+  background: #050805;
+  color: #9ac9a6;
   overflow: auto;
   font-family: monospace;
+  font-size: 14px;
+  line-height: 1.1;
+  box-shadow:
+    inset 0 0 30px rgba(80, 170, 100, 0.04),
+    0 0 20px rgba(0, 0, 0, 0.2);
 }
 
 .ascii-output::before {
   content: 'ASCII OUTPUT';
   display: block;
+  margin: 0 -20px 20px;
   padding: 10px 16px;
-  border-bottom: 1px solid #2d2d2d;
-  background: #111;
-  color: #888;
+  border-bottom: 1px solid #253129;
+  background: #0b100c;
+  color: #63806b;
   font-family: monospace;
-  font-size: 13px;
+  font-size: 11px;
   letter-spacing: 1px;
 }
 
 .ascii-output p {
-  color: #666;
-  padding: 24px;
   margin: 0;
+  padding: 24px 0;
+  color: #4f6255;
   font-family: monospace;
-  font-size: 14px;
+  font-size: 13px;
 }
+
+/* Responsive */
 @media (max-width: 900px) {
   .main-content {
     grid-template-columns: 1fr;

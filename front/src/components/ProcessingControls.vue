@@ -1,17 +1,11 @@
 <script setup lang="ts">
 import '@/styles/ProcessingControls.css'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
 import FileUpload from 'primevue/fileupload'
 import type { FileUploadSelectEvent } from 'primevue/fileupload'
-interface ProcessingConfig {
-  file: File
-  image: 'image' | 'video'
-  resolution: string
-  filter: string
-}
-
+import type { ProcessingConfig } from '@/types/ProcessingConfig'
 const resolutions = [
   { label: '40 x 20', value: '40x20' },
   { label: '80 x 40', value: '80x40' },
@@ -33,6 +27,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   fileSelected: [file: File]
+  process: [config: ProcessingConfig]
 }>()
 
 const image = ref<'image' | 'video'>('image')
@@ -42,43 +37,22 @@ const errorMessage = ref('')
 
 const isProcessing = ref(false)
 
-watch(image, (newValue) => {
-  console.log('Tipo de entrada:', newValue)
-})
-
-watch(resolution, (newValue) => {
-  console.log('Resolucion:', newValue)
-})
-
-watch(filter, (newValue) => {
-  console.log('Filtro:', newValue)
-})
-
 const handleFileChange = (event: FileUploadSelectEvent) => {
   const file = event.files[0]
   if (file) {
     emit('fileSelected', file)
-    console.log('Archivo seleccionado', file)
-    console.log('Nombre:', file.name)
-    console.log('Tipo:', file.type)
-    console.log('Tamaño', file.size)
   }
 }
 
 const formatFileSize = (size: number) => {
-  if (size < 1024) {
-    return `${size} B`
-  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let unit = 0
 
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(2)} KB`
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit++
   }
-
-  if (size < 1024 * 1024 * 1024) {
-    return `${(size / (1024 * 1024)).toFixed(2)} MB`
-  }
-
-  return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  return `${size.toFixed(2)} ${units[unit]}`
 }
 
 const startProcessing = () => {
@@ -112,7 +86,7 @@ const startProcessing = () => {
     resolution: resolution.value,
     filter: filter.value,
   }
-  console.log('Configuracion lista para procesar:', processingConfig)
+  emit('process', processingConfig)
 
   setTimeout(() => {
     isProcessing.value = false

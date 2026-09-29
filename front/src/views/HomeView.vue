@@ -3,9 +3,14 @@ import { ref } from 'vue'
 import VideoPreview from '@/components/VideoPreview.vue'
 import ProcessingControls from '@/components/ProcessingControls.vue'
 import '@/styles/HomeView.css'
+import type { ProcessingConfig } from '@/types/ProcessingConfig'
 
 const selectedFile = ref<File | null>(null)
 const previewUrl = ref<string | null>(null)
+
+const handleProcess = (config: ProcessingConfig) => {
+  console.log('Configuracion recibida en HomeView:', config)
+}
 
 const handleFileSelected = (file: File) => {
   selectedFile.value = file
@@ -14,8 +19,6 @@ const handleFileSelected = (file: File) => {
     URL.revokeObjectURL(previewUrl.value)
   }
   previewUrl.value = URL.createObjectURL(file)
-
-  console.log('Archivo recibido en HomeView', file)
 }
 </script>
 
@@ -23,7 +26,7 @@ const handleFileSelected = (file: File) => {
   <div class="home">
     <header class="header">
       <div class="header-top">
-        <div>
+        <div class="header-title">
           <span class="terminal-prefix">></span>
           <h1>ASCII Converter</h1>
         </div>
@@ -44,7 +47,11 @@ const handleFileSelected = (file: File) => {
       <section class="controls-section">
         <h2>Configuración</h2>
 
-        <ProcessingControls :file="selectedFile" @file-selected="handleFileSelected" />
+        <ProcessingControls
+          :file="selectedFile"
+          @file-selected="handleFileSelected"
+          @process="handleProcess"
+        />
       </section>
     </main>
 
