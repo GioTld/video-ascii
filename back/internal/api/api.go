@@ -29,16 +29,25 @@ func NewServer() *Server {
 	return s
 }
 
-// ServeHTTP implements the http.Handler interface.
+// ServeHTTP implements http.Handler and adds CORS headers for browser clients.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.mux.ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/render/image", s.handleRenderImage)
 	s.mux.HandleFunc("/render/video", s.handleRenderVideo)
+	s.mux.HandleFunc("/upload/video", s.handleUploadVideo)
 }
 
+// ServeHTTP implements http.Handler and adds CORS headers for browser clients.
 func (s *Server) handleRenderImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -119,11 +128,22 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	videoPath := r.URL.Query().Get("path")
-	if videoPath == "" {
-		http.Error(w, "missing 'path' query parameter", http.StatusBadRequest)
-		return
+	var videoPath string
+	if id := r.URL.Query().Get("id"); id != "" {
+		p, ok := store.get(id)
+		if !ok {
+			http.Error(w, "upload not found or expired", http.StatusNotFound)
+			return
+		}
+		videoPath = p
+	} else {
+		videoPath = r.URL.Query().Get("path")
+		if videoPath == "" {
+			http.Error(w, "missing 'id' or 'path' query parameter", http.StatusBadRequest)
+			return
+		}
 	}
+
 	if strings.ToLower(filepath.Ext(videoPath)) != ".mp4" {
 		http.Error(w, "only .mp4 files are supported", http.StatusBadRequest)
 		return
@@ -135,7 +155,6 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	height := parseIntParam(r, "height", 0)
-	ramp := r.URL.Query().Get("ramp")
 	colorMode := parseColorModeParam(r)
 
 	filterParam := r.URL.Query().Get("filter")
@@ -157,7 +176,7 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := ascii.NewConverter(ramp)
+	conv, err := ascii.NewConverter("")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to initialize ascii converter: %v", err), http.StatusInternalServerError)
 		return
