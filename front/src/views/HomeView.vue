@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, watch } from 'vue'
-import TerminalOutput from '@/components/TerminalOutput.vue'
+import AsciiCanvas from '@/components/AsciiCanvas.vue'
 import { renderImage, uploadVideo, streamVideo } from '@/services/asciiService'
 
 type LogType = 'info' | 'ok' | 'err' | 'cmd'
@@ -43,7 +43,7 @@ const log = ref<LogLine[]>([
 ])
 const logContainer = ref<HTMLDivElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
-const terminalRef = ref<InstanceType<typeof TerminalOutput> | null>(null)
+const terminalRef = ref<InstanceType<typeof AsciiCanvas> | null>(null)
 
 // hasContent controls visibility of the terminal div — the only reactive state
 // in the frame render path. The actual frame bytes bypass Vue entirely.
@@ -288,9 +288,9 @@ watch([preset, selectedFilter], () => {
             </div>
           </div>
 
-          <!-- xterm.js terminal — always mounted, written imperatively (no Vue reactivity in hot path) -->
+          <!-- Canvas ASCII renderer — written imperatively, no Vue reactivity in hot path -->
           <div class="terminal-fill" :style="{ visibility: hasContent ? 'visible' : 'hidden' }">
-            <TerminalOutput ref="terminalRef" />
+            <AsciiCanvas ref="terminalRef" />
           </div>
         </div>
 
