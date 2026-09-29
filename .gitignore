@@ -8,3 +8,8 @@ back/video-ascii
 *.exe
 *.test
 *.out
+
+# Frontend
+front/node_modules/
+front/dist/
+front/.vite/
