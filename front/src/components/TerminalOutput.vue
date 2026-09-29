@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -28,7 +29,6 @@ onMounted(() => {
     scrollback: 0,
     cursorStyle: 'block',
     cursorBlink: false,
-    // WebGL renderer is used automatically by xterm when available.
   })
 
   fitAddon = new FitAddon()
@@ -36,7 +36,18 @@ onMounted(() => {
   term.open(containerRef.value)
   fitAddon.fit()
 
-  resizeObserver = new ResizeObserver(() => fitAddon?.fit())
+  // WebGL renderer: GPU-accelerated draw — falls back to canvas on unsupported contexts.
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => webgl.dispose())
+    term.loadAddon(webgl)
+  } catch {
+    // Canvas fallback is already active, nothing to do.
+  }
+
+  resizeObserver = new ResizeObserver(() => {
+    fitAddon?.fit()
+  })
   resizeObserver.observe(containerRef.value)
 })
 
@@ -45,7 +56,6 @@ onUnmounted(() => {
   term?.dispose()
 })
 
-// write is called directly from the parent — no Vue reactivity in the hot path.
 function write(text: string) {
   if (!term) return
   if (firstWrite) {
@@ -54,7 +64,6 @@ function write(text: string) {
     term.write(text)
     return
   }
-  // Overwrite in place: move cursor to origin, then paint the new frame.
   term.write('\x1b[H' + text)
 }
 
@@ -63,7 +72,16 @@ function reset() {
   term?.reset()
 }
 
-defineExpose({ write, reset })
+// Returns the number of columns and rows the terminal can fit in its current
+// container size. HomeView uses this to send exact dimensions to the backend.
+function getDimensions(): { cols: number; rows: number } | null {
+  if (!fitAddon || !term) return null
+  const dims = fitAddon.proposeDimensions()
+  if (!dims) return null
+  return { cols: dims.cols, rows: dims.rows }
+}
+
+defineExpose({ write, reset, getDimensions })
 </script>
 
 <template>

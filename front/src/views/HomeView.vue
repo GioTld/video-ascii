@@ -21,11 +21,13 @@ function mkLine(text: string, type: LogType = 'info'): LogLine {
   return { id: lineId++, text, type }
 }
 
+// cols/rows = 0 is the sentinel for "fit to terminal".
 const PRESETS: Preset[] = [
   { label: '40×20', cols: 40, rows: 20 },
   { label: '80×40', cols: 80, rows: 40 },
   { label: '120×60', cols: 120, rows: 60 },
   { label: '200×100', cols: 200, rows: 100 },
+  { label: 'fit', cols: 0, rows: 0 },
 ]
 
 const FILTERS = [
@@ -54,6 +56,15 @@ const preset = ref<Preset>(PRESETS[1]!)
 const colorMode = ref<'green' | 'amber' | 'white'>('green')
 const selectedFilter = ref('none')
 let activeStream: EventSource | null = null
+
+// Resolve actual render dimensions: use terminal fit dimensions when preset is "fit".
+function resolveRenderDims(): { cols: number; rows: number } {
+  if (preset.value.cols !== 0) {
+    return { cols: preset.value.cols, rows: preset.value.rows }
+  }
+  const dims = terminalRef.value?.getDimensions()
+  return dims ?? { cols: 80, rows: 40 }
+}
 
 function addLog(text: string, type: LogType = 'info') {
   log.value = [...log.value.slice(-60), mkLine(text, type)]
@@ -102,11 +113,13 @@ async function handleFile(file: File) {
   isProcessing.value = true
 
   try {
+    const dims = resolveRenderDims()
+
     if (type === 'image') {
-      addLog(`rendering at ${preset.value.cols}×${preset.value.rows} chars...`)
+      addLog(`rendering at ${dims.cols}×${dims.rows} chars...`)
       const result = await renderImage(file, {
-        width: preset.value.cols,
-        height: preset.value.rows,
+        width: dims.cols,
+        height: dims.rows,
         filter: selectedFilter.value,
         color: true,
       })
@@ -118,11 +131,11 @@ async function handleFile(file: File) {
     } else {
       addLog('uploading video...')
       const id = await uploadVideo(file)
-      addLog(`stream ready — ${preset.value.cols}×${preset.value.rows} chars`, 'ok')
+      addLog(`stream ready — ${dims.cols}×${dims.rows} chars`, 'ok')
 
       activeStream = streamVideo(
         id,
-        { width: preset.value.cols, height: preset.value.rows, filter: selectedFilter.value, color: true },
+        { width: dims.cols, height: dims.rows, filter: selectedFilter.value, color: true },
         (frame) => {
           // Hot path: write directly to xterm — zero Vue reactivity overhead.
           if (!hasContent.value) hasContent.value = true
