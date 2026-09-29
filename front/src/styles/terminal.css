@@ -1,0 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+:root {
+  --bg: #0a0b0d;
+  --surface: #0f1117;
+  --border: #1e2530;
+  --green: #39d353;
+  --green-dim: #1a6b2a;
+  --green-bright: #7fff8f;
+  --amber: #f0a020;
+  --muted: #3a4a5a;
+  --text: #c8d8b0;
+  --err: #ff4444;
+  --cmd: #7eb8f7;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+/* Scanline overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.06) 2px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--green-dim);
+  border-radius: 2px;
+}
+
+/* Cursor blink */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1em;
+  background: var(--green);
+  vertical-align: text-bottom;
+  animation: blink 1.1s step-end infinite;
+}
+
+.glow-text {
+  text-shadow: 0 0 8px rgba(57, 211, 83, 0.6);
+}
+
+/* ASCII output pre */
+.ascii-output {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: pre;
+  color: var(--green);
+  text-shadow: 0 0 4px rgba(57, 211, 83, 0.35);
+}
+
+.ascii-output.amber {
+  color: var(--amber);
+  text-shadow: 0 0 4px rgba(240, 160, 32, 0.35);
+}
+
+.ascii-output.white {
+  color: #e0e8f0;
+  text-shadow: none;
+}
+
+/* Terminal button */
+.term-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+}
+
+.term-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+  text-shadow: 0 0 6px rgba(57, 211, 83, 0.5);
+}
+
+.term-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(57, 211, 83, 0.06);
+}
+
+.term-btn.full {
+  width: 100%;
+  text-align: left;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.4s ease;
+}
