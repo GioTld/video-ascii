@@ -51,6 +51,7 @@ const preset = ref<Preset>(PRESETS[1]!)
 const colorMode = ref<'green' | 'amber' | 'white'>('green')
 const selectedFilter = ref('none')
 let activeStream: EventSource | null = null
+const terminalRef = ref<InstanceType<typeof TerminalOutput> | null>(null)
 
 
 function addLog(text: string, type: LogType = 'info') {
@@ -89,6 +90,7 @@ async function handleFile(file: File) {
   selectedFile.value = file
   asciiContent.value = ''
   mediaInfo.value = null
+  terminalRef.value?.reset()
 
   const type = file.type.startsWith('video/') ? 'video' : 'image'
   isVideo.value = type === 'video'
@@ -270,7 +272,7 @@ watch([preset, selectedFilter], () => {
 
           <!-- xterm.js terminal — always mounted so xterm initializes once -->
           <div class="terminal-fill" :style="{ visibility: asciiContent ? 'visible' : 'hidden' }">
-            <TerminalOutput :content="asciiContent" />
+            <TerminalOutput ref="terminalRef" :content="asciiContent" />
           </div>
         </div>
 
