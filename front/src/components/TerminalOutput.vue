@@ -11,6 +11,12 @@ let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let firstWrite = true
 
+// rAF-gating: only one frame is displayed per display refresh cycle.
+// If frames arrive faster than the monitor refresh rate, intermediate
+// frames are dropped and only the latest is rendered — no queuing, no noise.
+let pendingFrame: string | null = null
+let rafId: number | null = null
+
 onMounted(() => {
   if (!containerRef.value) return
 
@@ -21,7 +27,8 @@ onMounted(() => {
     theme: {
       background: '#0a0b0d',
       foreground: '#e0e0e0',
-      cursor: '#00ff41',
+      // Hide cursor to avoid a blinking artifact over ASCII content.
+      cursor: '#0a0b0d',
       cursorAccent: '#0a0b0d',
     },
     convertEol: true,
@@ -36,44 +43,65 @@ onMounted(() => {
   term.open(containerRef.value)
   fitAddon.fit()
 
-  // WebGL renderer: GPU-accelerated draw — falls back to canvas on unsupported contexts.
+  // WebGL renderer for GPU-accelerated draw. Falls back to canvas on failure.
   try {
     const webgl = new WebglAddon()
     webgl.onContextLoss(() => webgl.dispose())
     term.loadAddon(webgl)
   } catch {
-    // Canvas fallback is already active, nothing to do.
+    // Canvas renderer is already active.
   }
 
-  resizeObserver = new ResizeObserver(() => {
-    fitAddon?.fit()
-  })
+  resizeObserver = new ResizeObserver(() => fitAddon?.fit())
   resizeObserver.observe(containerRef.value)
 })
 
 onUnmounted(() => {
+  if (rafId !== null) cancelAnimationFrame(rafId)
   resizeObserver?.disconnect()
   term?.dispose()
 })
 
-function write(text: string) {
-  if (!term) return
+function flushFrame() {
+  rafId = null
+  if (!term || pendingFrame === null) return
+
+  const frame = pendingFrame
+  pendingFrame = null
+
   if (firstWrite) {
+    // Clean baseline on first frame.
     term.reset()
     firstWrite = false
-    term.write(text)
+    term.write(frame)
     return
   }
-  term.write('\x1b[H' + text)
+
+  // \x1b[2J clears the visible area.
+  // \x1b[H  moves cursor to (1,1).
+  // All in one write() call → xterm processes atomically, single render pass.
+  term.write('\x1b[2J\x1b[H' + frame)
+}
+
+function write(text: string) {
+  if (!term) return
+  pendingFrame = text
+  // Schedule a flush only if one is not already queued.
+  if (rafId === null) {
+    rafId = requestAnimationFrame(flushFrame)
+  }
 }
 
 function reset() {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
+  pendingFrame = null
   firstWrite = true
   term?.reset()
 }
 
-// Returns the number of columns and rows the terminal can fit in its current
-// container size. HomeView uses this to send exact dimensions to the backend.
 function getDimensions(): { cols: number; rows: number } | null {
   if (!fitAddon || !term) return null
   const dims = fitAddon.proposeDimensions()
