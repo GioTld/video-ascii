@@ -41,8 +41,11 @@ const log = ref<LogLine[]>([
 ])
 const logContainer = ref<HTMLDivElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+const terminalRef = ref<InstanceType<typeof TerminalOutput> | null>(null)
 
-const asciiContent = ref('')
+// hasContent controls visibility of the terminal div — the only reactive state
+// in the frame render path. The actual frame bytes bypass Vue entirely.
+const hasContent = ref(false)
 const isProcessing = ref(false)
 const mediaInfo = ref<string | null>(null)
 const isVideo = ref(false)
@@ -51,8 +54,6 @@ const preset = ref<Preset>(PRESETS[1]!)
 const colorMode = ref<'green' | 'amber' | 'white'>('green')
 const selectedFilter = ref('none')
 let activeStream: EventSource | null = null
-const terminalRef = ref<InstanceType<typeof TerminalOutput> | null>(null)
-
 
 function addLog(text: string, type: LogType = 'info') {
   log.value = [...log.value.slice(-60), mkLine(text, type)]
@@ -88,7 +89,7 @@ function stopStream() {
 async function handleFile(file: File) {
   stopStream()
   selectedFile.value = file
-  asciiContent.value = ''
+  hasContent.value = false
   mediaInfo.value = null
   terminalRef.value?.reset()
 
@@ -109,7 +110,9 @@ async function handleFile(file: File) {
         filter: selectedFilter.value,
         color: true,
       })
-      asciiContent.value = result
+      // Image: single write, then done.
+      hasContent.value = true
+      terminalRef.value?.write(result)
       addLog('render complete', 'ok')
       isProcessing.value = false
     } else {
@@ -121,7 +124,9 @@ async function handleFile(file: File) {
         id,
         { width: preset.value.cols, height: preset.value.rows, filter: selectedFilter.value, color: true },
         (frame) => {
-          asciiContent.value = frame
+          // Hot path: write directly to xterm — zero Vue reactivity overhead.
+          if (!hasContent.value) hasContent.value = true
+          terminalRef.value?.write(frame)
         },
         () => {
           addLog('stream ended', 'ok')
@@ -148,7 +153,7 @@ function onDrop(e: DragEvent) {
   if (file) handleFile(file)
 }
 
-// Re-render image on preset/filter change
+// Re-render image on preset/filter change.
 watch([preset, selectedFilter], () => {
   if (selectedFile.value && !isVideo.value && !isProcessing.value) {
     handleFile(selectedFile.value)
@@ -259,10 +264,10 @@ watch([preset, selectedFilter], () => {
         <!-- ASCII viewport -->
         <div class="viewport">
           <!-- Overlay: processing / empty -->
-          <div v-if="isProcessing && !asciiContent" class="viewport-overlay">
+          <div v-if="isProcessing && !hasContent" class="viewport-overlay">
             <span class="glow-text">processing<span class="cursor" /></span>
           </div>
-          <div v-else-if="!asciiContent" class="viewport-overlay">
+          <div v-else-if="!hasContent" class="viewport-overlay">
             <div class="viewport-empty">
               <div class="empty-icon">▒░▒</div>
               <div>no file loaded</div>
@@ -270,9 +275,9 @@ watch([preset, selectedFilter], () => {
             </div>
           </div>
 
-          <!-- xterm.js terminal — always mounted so xterm initializes once -->
-          <div class="terminal-fill" :style="{ visibility: asciiContent ? 'visible' : 'hidden' }">
-            <TerminalOutput ref="terminalRef" :content="asciiContent" />
+          <!-- xterm.js terminal — always mounted, written imperatively (no Vue reactivity in hot path) -->
+          <div class="terminal-fill" :style="{ visibility: hasContent ? 'visible' : 'hidden' }">
+            <TerminalOutput ref="terminalRef" />
           </div>
         </div>
 

@@ -1,15 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-
-const props = defineProps<{
-  content: string
-  // When true, subsequent writes overwrite in place (video mode).
-  // When false (default), the terminal is reset before each write (image mode).
-  streaming?: boolean
-}>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 let term: Terminal | null = null
@@ -21,7 +14,7 @@ onMounted(() => {
   if (!containerRef.value) return
 
   term = new Terminal({
-    fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
+    fontFamily: '"JetBrains Mono", "Cascadia Code", monospace',
     fontSize: 11,
     lineHeight: 1.0,
     theme: {
@@ -32,10 +25,10 @@ onMounted(() => {
     },
     convertEol: true,
     disableStdin: true,
-    // No scrollback — frames overwrite in place, scrollbar causes layout jitter.
     scrollback: 0,
     cursorStyle: 'block',
     cursorBlink: false,
+    // WebGL renderer is used automatically by xterm when available.
   })
 
   fitAddon = new FitAddon()
@@ -45,10 +38,6 @@ onMounted(() => {
 
   resizeObserver = new ResizeObserver(() => fitAddon?.fit())
   resizeObserver.observe(containerRef.value)
-
-  if (props.content) {
-    writeContent(props.content)
-  }
 })
 
 onUnmounted(() => {
@@ -56,38 +45,25 @@ onUnmounted(() => {
   term?.dispose()
 })
 
-function writeContent(text: string) {
+// write is called directly from the parent — no Vue reactivity in the hot path.
+function write(text: string) {
   if (!term) return
-
   if (firstWrite) {
-    // Full reset only on the very first frame to set a clean baseline.
     term.reset()
     firstWrite = false
     term.write(text)
     return
   }
-
-  // Subsequent frames: move cursor to top-left and overwrite in place.
-  // \x1b[H  — cursor to row 1, col 1
-  // \x1b[3J — clear scrollback (xterm.js extension, harmless if unsupported)
-  // No full reset → no repaint flash.
+  // Overwrite in place: move cursor to origin, then paint the new frame.
   term.write('\x1b[H' + text)
 }
 
-watch(
-  () => props.content,
-  (val) => {
-    if (val) writeContent(val)
-  },
-)
+function reset() {
+  firstWrite = true
+  term?.reset()
+}
 
-// Expose reset so parent can force a clean slate when switching files.
-defineExpose({
-  reset() {
-    firstWrite = true
-    term?.reset()
-  },
-})
+defineExpose({ write, reset })
 </script>
 
 <template>
