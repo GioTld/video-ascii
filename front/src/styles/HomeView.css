@@ -224,3 +224,24 @@
     padding: 18px;
   }
 }
+
+.terminal-wrapper {
+  margin-top: 18px;
+  height: 400px;
+  border: 1px solid #253129;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.error-msg {
+  margin: 12px 0 0;
+  color: #e05555;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
