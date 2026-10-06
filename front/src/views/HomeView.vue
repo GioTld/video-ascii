@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, onUnmounted, watch } from 'vue'
 import AsciiCanvas from '@/components/AsciiCanvas.vue'
-import { renderImage, uploadVideo, streamVideo } from '@/services/asciiService'
+import { renderImage, uploadVideo, streamVideo, type ProcessingConfig } from '@/services/asciiService'
 
 type LogType = 'info' | 'ok' | 'err' | 'cmd'
 interface LogLine {
@@ -35,7 +35,15 @@ const FILTERS = [
   { label: 'grayscale', value: 'grayscale' },
   { label: 'sepia', value: 'sepia' },
   { label: 'invert', value: 'invert' },
+  { label: 'edge', value: 'edge' },
+  { label: 'matrix', value: 'matrix' },
+  { label: 'brightness', value: 'brightness' },
+  { label: 'contrast', value: 'contrast' },
 ]
+
+const HD_MODES = ['none', 'half', 'braille'] as const
+const COLOR_MODES = ['24bit', '256', 'none'] as const
+const FIT_MODES = ['contain', 'cover'] as const
 
 const log = ref<LogLine[]>([
   mkLine('ASCII-RENDER v1.0.0 — ready', 'ok'),
@@ -53,18 +61,70 @@ const mediaInfo = ref<string | null>(null)
 const isVideo = ref(false)
 const selectedFile = ref<File | null>(null)
 const preset = ref<Preset>(PRESETS[1]!)
+const fitDimensions = ref({ cols: 80, rows: 40 })
 const colorMode = ref<'green' | 'amber' | 'white'>('green')
 const selectedFilter = ref('none')
+const filterAmount = ref(1.2)
+const hdMode = ref<ProcessingConfig['hdMode']>('none')
+const renderColorMode = ref<ProcessingConfig['colorMode']>('24bit')
+const ramp = ref('')
+const fitMode = ref<ProcessingConfig['fitMode']>('contain')
 let activeStream: EventSource | null = null
+let uploadedVideoId: string | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
+function selectPreset(value: Preset) {
+  preset.value = value
+  if (value.label === 'fit') fitMode.value = 'contain'
+}
+
+function processingConfig(width: number, height: number): ProcessingConfig {
+  const filter = ['brightness', 'contrast'].includes(selectedFilter.value)
+    ? `${selectedFilter.value}=${filterAmount.value}`
+    : selectedFilter.value
+  return {
+    width,
+    height,
+    filter,
+    colorMode: renderColorMode.value,
+    ramp: ramp.value,
+    hdMode: hdMode.value,
+    fitMode: fitMode.value,
+  }
+}
+
+function frameMatchesHDMode(frame: string, mode: ProcessingConfig['hdMode']): boolean {
+  if (mode === 'half') return frame.includes('▀')
+  if (mode === 'braille') return /[\u2800-\u28ff]/.test(frame)
+  return true
+}
 
 // Resolve actual render dimensions: use terminal fit dimensions when preset is "fit".
 function resolveRenderDims(): { cols: number; rows: number } {
   if (preset.value.cols !== 0) {
     return { cols: preset.value.cols, rows: preset.value.rows }
   }
-  const dims = terminalRef.value?.getDimensions()
-  return dims ?? { cols: 80, rows: 40 }
+  return terminalRef.value?.getDimensions() ?? fitDimensions.value
 }
+
+function onCanvasResize(dimensions: { cols: number; rows: number }) {
+  fitDimensions.value = dimensions
+  if (preset.value.label !== 'fit' || !selectedFile.value) return
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null
+    if (isVideo.value) {
+      if (uploadedVideoId) startVideoStream(uploadedVideoId)
+    } else if (!isProcessing.value && selectedFile.value) {
+      handleFile(selectedFile.value)
+    }
+  }, 150)
+}
+
+onUnmounted(() => {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  closeStream()
+})
 
 function addLog(text: string, type: LogType = 'info') {
   log.value = [...log.value.slice(-60), mkLine(text, type)]
@@ -89,12 +149,50 @@ function logPrefix(type: LogType): string {
   return '  >  '
 }
 
-function stopStream() {
+function closeStream() {
   if (activeStream) {
     activeStream.close()
     activeStream = null
   }
+}
+
+function stopStream() {
+  closeStream()
+  uploadedVideoId = null
   isProcessing.value = false
+}
+
+function startVideoStream(id: string) {
+  closeStream()
+  hasContent.value = false
+  terminalRef.value?.reset()
+  isProcessing.value = true
+
+  const dims = resolveRenderDims()
+  const config = processingConfig(dims.cols, dims.rows)
+  let checkedMode = false
+  const source = streamVideo(
+    id,
+    config,
+    (frame) => {
+      if (activeStream !== source) return
+      if (!checkedMode) {
+        checkedMode = true
+        if (!frameMatchesHDMode(frame, config.hdMode)) {
+          addLog('HD mode was ignored; restart the Go server', 'err')
+        }
+      }
+      if (!hasContent.value) hasContent.value = true
+      terminalRef.value?.write(frame)
+    },
+    () => {
+      if (activeStream !== source) return
+      addLog('stream ended', 'ok')
+      closeStream()
+      isProcessing.value = false
+    },
+  )
+  activeStream = source
 }
 
 async function handleFile(file: File) {
@@ -117,12 +215,11 @@ async function handleFile(file: File) {
 
     if (type === 'image') {
       addLog(`rendering at ${dims.cols}×${dims.rows} chars...`)
-      const result = await renderImage(file, {
-        width: dims.cols,
-        height: dims.rows,
-        filter: selectedFilter.value,
-        color: true,
-      })
+      const config = processingConfig(dims.cols, dims.rows)
+      const result = await renderImage(file, config)
+      if (!frameMatchesHDMode(result, config.hdMode)) {
+        addLog('HD mode was ignored; restart the Go server', 'err')
+      }
       // Image: single write, then done.
       hasContent.value = true
       terminalRef.value?.write(result)
@@ -131,22 +228,9 @@ async function handleFile(file: File) {
     } else {
       addLog('uploading video...')
       const id = await uploadVideo(file)
+      uploadedVideoId = id
       addLog(`stream ready — ${dims.cols}×${dims.rows} chars`, 'ok')
-
-      activeStream = streamVideo(
-        id,
-        { width: dims.cols, height: dims.rows, filter: selectedFilter.value, color: true },
-        (frame) => {
-          // Hot path: write directly to xterm — zero Vue reactivity overhead.
-          if (!hasContent.value) hasContent.value = true
-          terminalRef.value?.write(frame)
-        },
-        () => {
-          addLog('stream ended', 'ok')
-          isProcessing.value = false
-          activeStream = null
-        },
-      )
+      startVideoStream(id)
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown error'
@@ -166,9 +250,11 @@ function onDrop(e: DragEvent) {
   if (file) handleFile(file)
 }
 
-// Re-render image on preset/filter change.
-watch([preset, selectedFilter], () => {
-  if (selectedFile.value && !isVideo.value && !isProcessing.value) {
+watch([preset, selectedFilter, filterAmount, hdMode, renderColorMode, ramp, fitMode], () => {
+  if (!selectedFile.value) return
+  if (isVideo.value) {
+    if (uploadedVideoId) startVideoStream(uploadedVideoId)
+  } else if (!isProcessing.value) {
     handleFile(selectedFile.value)
   }
 })
@@ -185,7 +271,7 @@ watch([preset, selectedFilter], () => {
       <span class="topbar-title">ASCII-RENDER — terminal</span>
       <span v-if="mediaInfo" class="topbar-info">[{{ mediaInfo }}]</span>
       <div class="topbar-spacer" />
-      <span class="topbar-dims">{{ preset.cols }}×{{ preset.rows }} chars</span>
+      <span class="topbar-dims">{{ preset.label === 'fit' ? fitDimensions.cols : preset.cols }}×{{ preset.label === 'fit' ? fitDimensions.rows : preset.rows }} chars</span>
     </div>
 
     <!-- Body -->
@@ -219,7 +305,7 @@ watch([preset, selectedFilter], () => {
             :key="p.label"
             class="term-btn full"
             :class="{ active: preset.label === p.label }"
-            @click="preset = p"
+            @click="selectPreset(p)"
           >
             {{ p.label }}
           </button>
@@ -237,6 +323,58 @@ watch([preset, selectedFilter], () => {
           >
             {{ f.label }}
           </button>
+          <div v-if="selectedFilter === 'brightness' || selectedFilter === 'contrast'" class="side-row">
+            <label class="filter-amount-label" for="filter-amount">Amount</label>
+            <input
+              id="filter-amount"
+              v-model.number="filterAmount"
+              class="term-input"
+              type="number"
+              min="0"
+              max="5"
+              step="0.1"
+            />
+          </div>
+        </div>
+
+        <div class="side-section">
+          <div class="side-label">HD MODE</div>
+          <button
+            v-for="mode in HD_MODES"
+            :key="mode"
+            class="term-btn full"
+            :class="{ active: hdMode === mode }"
+            @click="hdMode = mode"
+          >{{ mode }}</button>
+        </div>
+
+        <div class="side-section">
+          <div class="side-label">COLOR MODE</div>
+          <button
+            v-for="mode in COLOR_MODES"
+            :key="mode"
+            class="term-btn full"
+            :class="{ active: renderColorMode === mode }"
+            @click="renderColorMode = mode"
+          >{{ mode }}</button>
+        </div>
+
+        <div class="side-section">
+          <label class="side-label" for="ramp">RAMP</label>
+          <div class="side-row">
+            <input id="ramp" v-model.lazy="ramp" class="term-input" type="text" placeholder="default" />
+          </div>
+        </div>
+
+        <div class="side-section">
+          <div class="side-label">FIT</div>
+          <button
+            v-for="mode in FIT_MODES"
+            :key="mode"
+            class="term-btn full"
+            :class="{ active: fitMode === mode }"
+            @click="fitMode = mode"
+          >{{ mode }}</button>
         </div>
 
         <!-- COLOR -->
@@ -290,7 +428,11 @@ watch([preset, selectedFilter], () => {
 
           <!-- Canvas ASCII renderer — written imperatively, no Vue reactivity in hot path -->
           <div class="terminal-fill" :style="{ visibility: hasContent ? 'visible' : 'hidden' }">
-            <AsciiCanvas ref="terminalRef" />
+            <AsciiCanvas
+              ref="terminalRef"
+              :letterbox="preset.label === 'fit' && fitMode === 'contain'"
+              @resize="onCanvasResize"
+            />
           </div>
         </div>
 
@@ -386,6 +528,22 @@ watch([preset, selectedFilter], () => {
 
 .side-row {
   padding: 2px 8px;
+}
+
+.term-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font: inherit;
+  padding: 5px 6px;
+}
+
+.filter-amount-label {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 3px;
 }
 
 .file-info {

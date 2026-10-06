@@ -1,17 +1,21 @@
 const BASE_URL = '/api'
 
-export interface RenderImageConfig {
+export interface ProcessingConfig {
   width: number
   height: number
   filter?: string
   color?: boolean
+  colorMode?: '24bit' | '256' | 'none'
+  ramp?: string
+  hdMode?: 'none' | 'half' | 'braille'
+  fitMode?: 'contain' | 'cover'
 }
 
 export interface UploadVideoResult {
   id: string
 }
 
-export async function renderImage(file: File, config: RenderImageConfig): Promise<string> {
+function renderParams(config: ProcessingConfig): URLSearchParams {
   const params = new URLSearchParams({
     width: String(config.width),
     height: String(config.height),
@@ -19,9 +23,20 @@ export async function renderImage(file: File, config: RenderImageConfig): Promis
   if (config.filter && config.filter !== 'none') {
     params.set('filter', config.filter)
   }
-  if (config.color) {
+  if (config.colorMode && config.colorMode !== 'none') {
+    params.set('color', 'true')
+    params.set('color_mode', config.colorMode)
+  } else if (config.color && config.colorMode !== 'none') {
     params.set('color', 'true')
   }
+  if (config.ramp) params.set('ramp', config.ramp)
+  if (config.hdMode && config.hdMode !== 'none') params.set('hd_mode', config.hdMode)
+  if (config.fitMode) params.set('fit_mode', config.fitMode)
+  return params
+}
+
+export async function renderImage(file: File, config: ProcessingConfig): Promise<string> {
+  const params = renderParams(config)
 
   const form = new FormData()
   form.append('file', file)
@@ -59,19 +74,12 @@ export async function uploadVideo(file: File): Promise<string> {
 
 export function streamVideo(
   id: string,
-  config: RenderImageConfig,
+  config: ProcessingConfig,
   onFrame: (ansiText: string) => void,
   onError: (err: Event) => void,
 ): EventSource {
-  const params = new URLSearchParams({
-    id,
-    width: String(config.width),
-    height: String(config.height),
-    color: config.color ? 'true' : 'false',
-  })
-  if (config.filter && config.filter !== 'none') {
-    params.set('filter', config.filter)
-  }
+  const params = renderParams(config)
+  params.set('id', id)
 
   const source = new EventSource(`${BASE_URL}/render/video?${params}`)
 
