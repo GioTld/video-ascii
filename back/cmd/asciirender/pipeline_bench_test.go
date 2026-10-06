@@ -3,11 +3,14 @@ package main
 import (
 	"image"
 	"image/color"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/GioTld/video-ascii/internal/ascii"
+	"github.com/GioTld/video-ascii/internal/decode"
 	"github.com/GioTld/video-ascii/internal/filter"
 	"github.com/GioTld/video-ascii/internal/frame"
 	"github.com/GioTld/video-ascii/internal/render"
@@ -162,6 +165,62 @@ func BenchmarkFullPipeline_PerFrame(b *testing.B) {
 	}
 }
 
+func BenchmarkVideoPipeline(b *testing.B) {
+	benchmarkVideoPipeline(b, false)
+}
+
+func BenchmarkVideoPipelineScaled(b *testing.B) {
+	benchmarkVideoPipeline(b, true)
+}
+
+func benchmarkVideoPipeline(b *testing.B, scaled bool) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		b.Skip("ffmpeg is required")
+	}
+	videoPath := filepath.Join(b.TempDir(), "benchmark.mp4")
+	cmd := exec.Command("ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30", "-t", "1", "-c:v", "mpeg4", "-q:v", "5", "-y", videoPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		b.Fatalf("create video fixture: %v: %s", err, output)
+	}
+	conv, err := ascii.NewConverter("")
+	if err != nil {
+		b.Fatal(err)
+	}
+	filters := filter.Chain(filter.Brightness(1.2), filter.Contrast(1.2))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var frames <-chan *frame.Frame
+		var errors <-chan error
+		if scaled {
+			frames, errors = decode.DecodeVideoScaled(videoPath, 320, 160, nil)
+		} else {
+			frames, errors = decode.DecodeVideo(videoPath, nil)
+		}
+		frameCount := 0
+		for raw := range frames {
+			resized, err := raw.Resize(80, 40, 0.5)
+			if err != nil {
+				b.Fatal(err)
+			}
+			converted, err := conv.ConvertFrame(filters(resized))
+			if err != nil {
+				b.Fatal(err)
+			}
+			_ = render.FormatFrameANSI(converted, render.ColorMode24Bit)
+			frameCount++
+		}
+		for err := range errors {
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		if frameCount != 30 {
+			b.Fatalf("decoded %d frames, want 30", frameCount)
+		}
+	}
+}
+
 func TestContinuousPlaybackMetrics(t *testing.T) {
 	img := create1080pImage()
 	f, err := frame.New(img)
@@ -220,4 +279,3 @@ func TestContinuousPlaybackMetrics(t *testing.T) {
 		t.Errorf("heap in use %.2f MB exceeds 60 MB requirement", heapInuseMB)
 	}
 }
-

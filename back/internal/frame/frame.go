@@ -34,7 +34,7 @@ func New(img image.Image) (*Frame, error) {
 type ResizedFrame struct {
 	Width  int
 	Height int
-	Pixels [][]color.Color
+	Pixels [][]color.RGBA
 }
 
 // Resize reduce el frame a un grid de targetWidth por targetHeight celdas.
@@ -59,102 +59,18 @@ func (f *Frame) Resize(targetWidth, targetHeight int, fontAspectRatio float64) (
 	}
 	bounds := f.Image.Bounds()
 	minX, minY := bounds.Min.X, bounds.Min.Y
-	pixels := make([][]color.Color, targetHeight)
-	storage := make([]color.Color, targetHeight*targetWidth)
+	pixels := make([][]color.RGBA, targetHeight)
+	storage := make([]color.RGBA, targetHeight*targetWidth)
 	for y := 0; y < targetHeight; y++ {
 		pixels[y] = storage[y*targetWidth : (y+1)*targetWidth]
 	}
 
 	switch img := f.Image.(type) {
 	case *image.RGBA:
-		pix := img.Pix
-		stride := img.Stride
-		for y := 0; y < targetHeight; y++ {
-			startY := minY + (y * f.Height / targetHeight)
-			endY := minY + ((y + 1) * f.Height / targetHeight)
-			if endY <= startY {
-				endY = startY + 1
-			}
-			for x := 0; x < targetWidth; x++ {
-				startX := minX + (x * f.Width / targetWidth)
-				endX := minX + ((x + 1) * f.Width / targetWidth)
-				if endX <= startX {
-					endX = startX + 1
-				}
-				var rSum, gSum, bSum, aSum uint64
-				var count uint64
-				for cy := startY; cy < endY; cy++ {
-					rowOff := (cy - bounds.Min.Y) * stride
-					for cx := startX; cx < endX; cx++ {
-						idx := rowOff + (cx-bounds.Min.X)*4
-						rSum += uint64(pix[idx])
-						gSum += uint64(pix[idx+1])
-						bSum += uint64(pix[idx+2])
-						aSum += uint64(pix[idx+3])
-						count++
-					}
-				}
-				if count == 0 {
-					idx := (startY-bounds.Min.Y)*stride + (startX-bounds.Min.X)*4
-					rSum = uint64(pix[idx])
-					gSum = uint64(pix[idx+1])
-					bSum = uint64(pix[idx+2])
-					aSum = uint64(pix[idx+3])
-					count = 1
-				}
-				pixels[y][x] = color.RGBA{
-					R: uint8(rSum / count),
-					G: uint8(gSum / count),
-					B: uint8(bSum / count),
-					A: uint8(aSum / count),
-				}
-			}
-		}
+		resizePackedRGBA(img.Pix, img.Stride, pixels, targetWidth, targetHeight, f.Width, f.Height)
 
 	case *image.NRGBA:
-		pix := img.Pix
-		stride := img.Stride
-		for y := 0; y < targetHeight; y++ {
-			startY := minY + (y * f.Height / targetHeight)
-			endY := minY + ((y + 1) * f.Height / targetHeight)
-			if endY <= startY {
-				endY = startY + 1
-			}
-			for x := 0; x < targetWidth; x++ {
-				startX := minX + (x * f.Width / targetWidth)
-				endX := minX + ((x + 1) * f.Width / targetWidth)
-				if endX <= startX {
-					endX = startX + 1
-				}
-				var rSum, gSum, bSum, aSum uint64
-				var count uint64
-				for cy := startY; cy < endY; cy++ {
-					rowOff := (cy - bounds.Min.Y) * stride
-					for cx := startX; cx < endX; cx++ {
-						idx := rowOff + (cx-bounds.Min.X)*4
-						rSum += uint64(pix[idx])
-						gSum += uint64(pix[idx+1])
-						bSum += uint64(pix[idx+2])
-						aSum += uint64(pix[idx+3])
-						count++
-					}
-				}
-				if count == 0 {
-					idx := (startY-bounds.Min.Y)*stride + (startX-bounds.Min.X)*4
-					rSum = uint64(pix[idx])
-					gSum = uint64(pix[idx+1])
-					bSum = uint64(pix[idx+2])
-					aSum = uint64(pix[idx+3])
-					count = 1
-				}
-				pixels[y][x] = color.RGBA{
-					R: uint8(rSum / count),
-					G: uint8(gSum / count),
-					B: uint8(bSum / count),
-					A: uint8(aSum / count),
-				}
-			}
-		}
+		resizePackedRGBA(img.Pix, img.Stride, pixels, targetWidth, targetHeight, f.Width, f.Height)
 
 	case *image.YCbCr:
 		for y := 0; y < targetHeight; y++ {
@@ -248,6 +164,38 @@ func (f *Frame) Resize(targetWidth, targetHeight int, fontAspectRatio float64) (
 	}, nil
 }
 
+func resizePackedRGBA(pix []byte, stride int, pixels [][]color.RGBA, targetWidth, targetHeight, sourceWidth, sourceHeight int) {
+	for y := 0; y < targetHeight; y++ {
+		startY := y * sourceHeight / targetHeight
+		endY := max((y+1)*sourceHeight/targetHeight, startY+1)
+		for x := 0; x < targetWidth; x++ {
+			startX := x * sourceWidth / targetWidth
+			endX := max((x+1)*sourceWidth/targetWidth, startX+1)
+			var rSum, gSum, bSum, aSum uint64
+			startByte := startX * 4
+			endByte := endX * 4
+			for cy := startY; cy < endY; cy++ {
+				rowStart := cy*stride + startByte
+				row := pix[rowStart : cy*stride+endByte]
+				for len(row) >= 4 {
+					rSum += uint64(row[0])
+					gSum += uint64(row[1])
+					bSum += uint64(row[2])
+					aSum += uint64(row[3])
+					row = row[4:]
+				}
+			}
+			count := uint64(endY-startY) * uint64(endX-startX)
+			pixels[y][x] = color.RGBA{
+				R: uint8(rSum / count),
+				G: uint8(gSum / count),
+				B: uint8(bSum / count),
+				A: uint8(aSum / count),
+			}
+		}
+	}
+}
+
 // FitMode define cómo se ajusta una imagen a las dimensiones del contenedor de la terminal.
 type FitMode string
 
@@ -278,8 +226,8 @@ func (rf *ResizedFrame) Crop(x, y, w, h int) *ResizedFrame {
 	if w <= 0 || h <= 0 {
 		return rf
 	}
-	cropped := make([][]color.Color, h)
-	cropStorage := make([]color.Color, h*w)
+	cropped := make([][]color.RGBA, h)
+	cropStorage := make([]color.RGBA, h*w)
 	for cy := 0; cy < h; cy++ {
 		cropped[cy] = cropStorage[cy*w : (cy+1)*w]
 		copy(cropped[cy], rf.Pixels[y+cy][x:x+w])

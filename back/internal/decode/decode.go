@@ -146,6 +146,15 @@ func DecodeVideo(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-ch
 
 // DecodeVideoFrom extracts frames from an MP4 file via ffmpeg starting at startSec timestamp.
 func DecodeVideoFrom(path string, startSec float64, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
+	return decodeVideo(path, startSec, 0, 0, cancel)
+}
+
+// DecodeVideoScaled limits decoded video frames to the given dimensions while preserving aspect ratio.
+func DecodeVideoScaled(path string, maxWidth, maxHeight int, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
+	return decodeVideo(path, 0, maxWidth, maxHeight, cancel)
+}
+
+func decodeVideo(path string, startSec float64, maxWidth, maxHeight int, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
 	frames := make(chan *frame.Frame)
 	errc := make(chan error, 1)
 
@@ -157,7 +166,11 @@ func DecodeVideoFrom(path string, startSec float64, cancel <-chan struct{}) (<-c
 		if startSec > 0 {
 			args = append(args, "-ss", fmt.Sprintf("%.2f", startSec))
 		}
-		args = append(args, "-i", path, "-f", "image2pipe", "-vcodec", "ppm", "pipe:1")
+		args = append(args, "-i", path)
+		if maxWidth > 0 && maxHeight > 0 {
+			args = append(args, "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", maxWidth, maxHeight))
+		}
+		args = append(args, "-f", "image2pipe", "-vcodec", "ppm", "pipe:1")
 
 		cmd := exec.Command("ffmpeg", args...)
 

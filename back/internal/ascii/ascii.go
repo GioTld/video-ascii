@@ -99,7 +99,7 @@ func (c *Converter) ConvertFrame(f *frame.ResizedFrame) (*CharFrame, error) {
 	for y := 0; y < f.Height; y++ {
 		cells[y] = cellStorage[y*f.Width : (y+1)*f.Width]
 		for x := 0; x < f.Width; x++ {
-			rgba := toRGBA(f.Pixels[y][x])
+			rgba := f.Pixels[y][x]
 			lumInt := (54*uint32(rgba.R) + 183*uint32(rgba.G) + 19*uint32(rgba.B)) >> 8
 			if lumInt > 255 {
 				lumInt = 255
@@ -130,15 +130,6 @@ const (
 	// multiplicando la resolución por 8.
 	HDModeBraille HDMode = "braille"
 )
-
-// toRGBA convierte un color.Color en color.RGBA con valores 0–255.
-func toRGBA(c color.Color) color.RGBA {
-	if rgba, ok := c.(color.RGBA); ok {
-		return rgba
-	}
-	r, g, b, a := c.RGBA()
-	return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
-}
 
 // avgColor promedia una lista de colores RGBA.
 func avgColor(colors []color.RGBA) color.RGBA {
@@ -172,10 +163,10 @@ func (c *Converter) convertHalfBlock(f *frame.ResizedFrame) *CharFrame {
 		yTop := y * 2
 		yBot := yTop + 1
 		for x := 0; x < f.Width; x++ {
-			fg := toRGBA(f.Pixels[yTop][x])
+			fg := f.Pixels[yTop][x]
 			bg := fg
 			if yBot < f.Height {
-				bg = toRGBA(f.Pixels[yBot][x])
+				bg = f.Pixels[yBot][x]
 			}
 			idx := y*f.Width + x
 			bgStorage[idx] = bg
@@ -226,7 +217,7 @@ func (c *Converter) convertBraille(f *frame.ResizedFrame) *CharFrame {
 					if py >= f.Height || px >= f.Width {
 						continue
 					}
-					rgba := toRGBA(f.Pixels[py][px])
+					rgba := f.Pixels[py][px]
 					lumInt := (54*uint32(rgba.R) + 183*uint32(rgba.G) + 19*uint32(rgba.B)) >> 8
 					if lumInt > 128 {
 						mask |= 1 << brailleOffsets[row][col]
@@ -279,5 +270,3 @@ func (c *Converter) ConvertFrameHD(f *frame.ResizedFrame, mode HDMode) (*CharFra
 		return c.ConvertFrame(f)
 	}
 }
-
-

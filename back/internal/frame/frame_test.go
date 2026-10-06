@@ -104,10 +104,92 @@ func TestFrameResize(t *testing.T) {
 	}
 }
 
+func TestFrameResizePackedRGBA(t *testing.T) {
+	createImage := func(nrgba bool) image.Image {
+		bounds := image.Rect(10, 20, 14, 22)
+		colors := []color.RGBA{
+			{R: 10, G: 20, B: 30, A: 40},
+			{R: 30, G: 40, B: 50, A: 60},
+			{R: 50, G: 60, B: 70, A: 80},
+			{R: 70, G: 80, B: 90, A: 100},
+			{R: 20, G: 30, B: 40, A: 50},
+			{R: 40, G: 50, B: 60, A: 70},
+			{R: 60, G: 70, B: 80, A: 90},
+			{R: 80, G: 90, B: 100, A: 110},
+		}
+		if nrgba {
+			img := image.NewNRGBA(bounds)
+			for i, c := range colors {
+				img.SetNRGBA(bounds.Min.X+i%4, bounds.Min.Y+i/4, color.NRGBA(c))
+			}
+			return img.SubImage(image.Rect(11, 20, 13, 22))
+		}
+		img := image.NewRGBA(bounds)
+		for i, c := range colors {
+			img.SetRGBA(bounds.Min.X+i%4, bounds.Min.Y+i/4, c)
+		}
+		return img.SubImage(image.Rect(11, 20, 13, 22))
+	}
+
+	tests := []struct {
+		name   string
+		image  image.Image
+		width  int
+		height int
+		want   [][]color.RGBA
+	}{
+		{
+			name:   "rgba subimage downscale",
+			image:  createImage(false),
+			width:  1,
+			height: 1,
+			want:   [][]color.RGBA{{{R: 45, G: 55, B: 65, A: 75}}},
+		},
+		{
+			name:   "nrgba subimage downscale",
+			image:  createImage(true),
+			width:  1,
+			height: 1,
+			want:   [][]color.RGBA{{{R: 45, G: 55, B: 65, A: 75}}},
+		},
+		{
+			name:   "rgba subimage upscale",
+			image:  createImage(false),
+			width:  4,
+			height: 2,
+			want: [][]color.RGBA{
+				{{R: 30, G: 40, B: 50, A: 60}, {R: 30, G: 40, B: 50, A: 60}, {R: 50, G: 60, B: 70, A: 80}, {R: 50, G: 60, B: 70, A: 80}},
+				{{R: 40, G: 50, B: 60, A: 70}, {R: 40, G: 50, B: 60, A: 70}, {R: 60, G: 70, B: 80, A: 90}, {R: 60, G: 70, B: 80, A: 90}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := New(tt.image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resized, err := f.Resize(tt.width, tt.height, 0.5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for y, row := range tt.want {
+				for x, want := range row {
+					got := resized.Pixels[y][x]
+					if got != want {
+						t.Errorf("pixel (%d, %d) = %+v, want %+v", x, y, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestResizedFrame_Crop(t *testing.T) {
-	pixels := make([][]color.Color, 10)
+	pixels := make([][]color.RGBA, 10)
 	for y := range pixels {
-		pixels[y] = make([]color.Color, 10)
+		pixels[y] = make([]color.RGBA, 10)
 		for x := range pixels[y] {
 			pixels[y][x] = color.RGBA{R: uint8(x * 10), G: uint8(y * 10), B: 0, A: 255}
 		}
@@ -118,9 +200,8 @@ func TestResizedFrame_Crop(t *testing.T) {
 		t.Fatalf("Crop dimensions = %dx%d, want 4x4", cropped.Width, cropped.Height)
 	}
 	// Pixel en (0,0) del recortado debe corresponder a (2,2) del original
-	c := cropped.Pixels[0][0].(color.RGBA)
+	c := cropped.Pixels[0][0]
 	if c.R != 20 || c.G != 20 {
 		t.Errorf("Cropped (0,0) = {R:%d G:%d}, want {R:20 G:20}", c.R, c.G)
 	}
 }
-

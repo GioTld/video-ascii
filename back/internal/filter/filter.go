@@ -94,18 +94,13 @@ func clamp(v float64) uint8 {
 // mapPixels aplica una función de transformación pixel-a-pixel sobre un ResizedFrame
 // y devuelve un nuevo ResizedFrame con los píxeles transformados.
 func mapPixels(f *frame.ResizedFrame, fn func(r, g, b, a uint8) color.RGBA) *frame.ResizedFrame {
-	pixels := make([][]color.Color, f.Height)
-	storage := make([]color.Color, f.Height*f.Width)
+	pixels := make([][]color.RGBA, f.Height)
+	storage := make([]color.RGBA, f.Height*f.Width)
 	for y := 0; y < f.Height; y++ {
 		pixels[y] = storage[y*f.Width : (y+1)*f.Width]
 		for x := 0; x < f.Width; x++ {
 			c := f.Pixels[y][x]
-			if rgba, ok := c.(color.RGBA); ok {
-				pixels[y][x] = fn(rgba.R, rgba.G, rgba.B, rgba.A)
-			} else {
-				r32, g32, b32, a32 := c.RGBA()
-				pixels[y][x] = fn(uint8(r32>>8), uint8(g32>>8), uint8(b32>>8), uint8(a32>>8))
-			}
+			pixels[y][x] = fn(c.R, c.G, c.B, c.A)
 		}
 	}
 	return &frame.ResizedFrame{Width: f.Width, Height: f.Height, Pixels: pixels}
@@ -199,23 +194,12 @@ func Edge() Func {
 			lum[y] = lumStorage[y*f.Width : (y+1)*f.Width]
 			for x := 0; x < f.Width; x++ {
 				c := f.Pixels[y][x]
-				if rgba, ok := c.(color.RGBA); ok {
-					r8 := float64(rgba.R)
-					g8 := float64(rgba.G)
-					b8 := float64(rgba.B)
-					lum[y][x] = 0.2126*r8 + 0.7152*g8 + 0.0722*b8
-				} else {
-					r32, g32, b32, _ := c.RGBA()
-					r8 := float64(r32 >> 8)
-					g8 := float64(g32 >> 8)
-					b8 := float64(b32 >> 8)
-					lum[y][x] = 0.2126*r8 + 0.7152*g8 + 0.0722*b8
-				}
+				lum[y][x] = 0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)
 			}
 		}
 
-		pixels := make([][]color.Color, f.Height)
-		storage := make([]color.Color, f.Height*f.Width)
+		pixels := make([][]color.RGBA, f.Height)
+		storage := make([]color.RGBA, f.Height*f.Width)
 		for y := 0; y < f.Height; y++ {
 			pixels[y] = storage[y*f.Width : (y+1)*f.Width]
 			for x := 0; x < f.Width; x++ {

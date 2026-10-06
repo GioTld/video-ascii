@@ -8,8 +8,11 @@ import (
 	"image/jpeg"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/GioTld/video-ascii/internal/frame"
 )
 
 func TestDecodeImage(t *testing.T) {
@@ -192,3 +195,47 @@ func TestReadPPMFrame(t *testing.T) {
 	}
 }
 
+func TestDecodeVideoScaled(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg is required")
+	}
+	path := filepath.Join(t.TempDir(), "video.mp4")
+	cmd := exec.Command("ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=2", "-t", "1", "-c:v", "mpeg4", "-y", path)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create video fixture: %v: %s", err, output)
+	}
+
+	for _, tt := range []struct {
+		name      string
+		decode    func(string, <-chan struct{}) (<-chan *frame.Frame, <-chan error)
+		maxWidth  int
+		maxHeight int
+	}{
+		{name: "original", decode: DecodeVideo, maxWidth: 320, maxHeight: 180},
+		{name: "scaled", decode: func(path string, cancel <-chan struct{}) (<-chan *frame.Frame, <-chan error) {
+			return DecodeVideoScaled(path, 80, 40, cancel)
+		}, maxWidth: 80, maxHeight: 40},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			frames, errors := tt.decode(path, nil)
+			count := 0
+			for frm := range frames {
+				count++
+				if frm.Width > tt.maxWidth || frm.Height > tt.maxHeight {
+					t.Errorf("frame dimensions %dx%d exceed %dx%d", frm.Width, frm.Height, tt.maxWidth, tt.maxHeight)
+				}
+				if ratio := float64(frm.Width) / float64(frm.Height); ratio < 1.72 || ratio > 1.83 {
+					t.Errorf("frame aspect ratio %.3f differs from source", ratio)
+				}
+			}
+			for err := range errors {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if count != 2 {
+				t.Errorf("decoded %d frames, want 2", count)
+			}
+		})
+	}
+}

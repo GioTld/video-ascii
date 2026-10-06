@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/GioTld/video-ascii/internal/ascii"
 	"github.com/GioTld/video-ascii/internal/decode"
 	"github.com/GioTld/video-ascii/internal/filter"
+	"github.com/GioTld/video-ascii/internal/frame"
 	"github.com/GioTld/video-ascii/internal/render"
 )
 
@@ -81,7 +83,9 @@ func (s *Server) handleRenderImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resized, err := frm.Resize(width, height, 0.5)
+	hdMode := parseHDModeParam(r)
+	fitMode := parseFitModeParam(r)
+	resized, err := resizeForRender(frm, width, height, hdMode, fitMode)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to resize image: %v", err), http.StatusBadRequest)
 		return
@@ -106,7 +110,7 @@ func (s *Server) handleRenderImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	charFrame, err := conv.ConvertFrame(resized)
+	charFrame, err := conv.ConvertFrameHD(resized, hdMode)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to convert frame to ascii: %v", err), http.StatusInternalServerError)
 		return
@@ -155,8 +159,15 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	height := parseIntParam(r, "height", 0)
+	if height < 0 {
+		http.Error(w, "invalid height parameter", http.StatusBadRequest)
+		return
+	}
 	colorMode := parseColorModeParam(r)
+	hdMode := parseHDModeParam(r)
+	fitMode := parseFitModeParam(r)
 
+	ramp := r.URL.Query().Get("ramp")
 	filterParam := r.URL.Query().Get("filter")
 	filterFn, err := filter.Parse(filterParam)
 	if err != nil {
@@ -176,7 +187,7 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := ascii.NewConverter("")
+	conv, err := ascii.NewConverter(ramp)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to initialize ascii converter: %v", err), http.StatusInternalServerError)
 		return
@@ -188,54 +199,77 @@ func (s *Server) handleRenderVideo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Video-FPS", strconv.FormatFloat(meta.FPS, 'f', 3, 64))
 
 	cancel := make(chan struct{})
-	defer close(cancel)
-
-	// Detectar cuando el cliente cierra la conexión.
 	go func() {
 		<-r.Context().Done()
-		select {
-		case <-cancel:
-		default:
-		}
+		close(cancel)
 	}()
 
-	rawFrames, _ := decode.DecodeVideo(videoPath, cancel)
+	decodeWidth, decodeHeight := width, height
+	if hdMode == ascii.HDModeBraille {
+		decodeWidth *= 2
+		decodeHeight *= 4
+	} else if hdMode == ascii.HDModeHalfBlock {
+		decodeHeight *= 2
+	}
+	if decodeHeight == 0 {
+		decodeHeight = meta.Height
+	}
+	decodeWidth = min(meta.Width, decodeWidth*4)
+	decodeHeight = min(meta.Height, decodeHeight*4)
+	rawFrames, _ := decode.DecodeVideoScaled(videoPath, decodeWidth, decodeHeight, cancel)
 
 	frameDuration := time.Duration(float64(time.Second) / meta.FPS)
+	var streamStart time.Time
+	var frameIndex int64
 
 	for rawFrame := range rawFrames {
-		resized, err := rawFrame.Resize(width, height, 0.5)
+		if r.Context().Err() != nil {
+			return
+		}
+		var deadline time.Time
+		if !streamStart.IsZero() {
+			deadline = streamStart.Add(time.Duration(frameIndex) * frameDuration)
+			frameIndex++
+			if !time.Now().Before(deadline.Add(frameDuration)) {
+				continue
+			}
+		}
+		resized, err := resizeForRender(rawFrame, width, height, hdMode, fitMode)
 		if err != nil {
 			continue
 		}
 		if filterFn != nil {
 			resized = filterFn(resized)
 		}
-		charFrame, err := conv.ConvertFrame(resized)
+		charFrame, err := conv.ConvertFrameHD(resized, hdMode)
 		if err != nil {
 			continue
 		}
 
 		lines := render.FormatFrameANSI(charFrame, colorMode)
+		if streamStart.IsZero() {
+			streamStart = time.Now()
+			frameIndex = 1
+		} else {
+			if !time.Now().Before(deadline.Add(frameDuration)) {
+				continue
+			}
+			if wait := time.Until(deadline); wait > 0 {
+				select {
+				case <-time.After(wait):
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
 
 		// Formato SSE: "data: <línea>\n" por cada línea, separado por "\n\n".
-		start := time.Now()
-
 		fmt.Fprint(w, "event: frame\n")
 		for _, line := range lines {
 			fmt.Fprintf(w, "data: %s\n", line)
 		}
 		fmt.Fprint(w, "\n")
 		flusher.Flush()
-
-		// Respetar el framerate del video también en el stream HTTP.
-		if sleep := frameDuration - time.Since(start); sleep > 0 {
-			select {
-			case <-time.After(sleep):
-			case <-r.Context().Done():
-				return
-			}
-		}
 	}
 }
 
@@ -254,6 +288,72 @@ func parseColorModeParam(r *http.Request) render.ColorMode {
 	return render.ColorModeNone
 }
 
+func parseHDModeParam(r *http.Request) ascii.HDMode {
+	switch r.URL.Query().Get("hd_mode") {
+	case string(ascii.HDModeHalfBlock):
+		return ascii.HDModeHalfBlock
+	case string(ascii.HDModeBraille):
+		return ascii.HDModeBraille
+	default:
+		return ascii.HDModeNone
+	}
+}
+
+func parseFitModeParam(r *http.Request) frame.FitMode {
+	if r.URL.Query().Get("fit_mode") == string(frame.FitModeCover) {
+		return frame.FitModeCover
+	}
+	return frame.FitModeContain
+}
+
+func resizeForRender(src *frame.Frame, width, height int, hdMode ascii.HDMode, fitMode frame.FitMode) (*frame.ResizedFrame, error) {
+	fontRatio := 0.5
+	if hdMode == ascii.HDModeHalfBlock {
+		fontRatio = 1.0
+	} else if hdMode == ascii.HDModeBraille {
+		fontRatio = 2.0
+	}
+	if hdMode == ascii.HDModeBraille {
+		width *= 2
+	}
+	if hdMode == ascii.HDModeHalfBlock {
+		height *= 2
+	} else if hdMode == ascii.HDModeBraille {
+		height *= 4
+	}
+	if height == 0 {
+		return src.Resize(width, 0, fontRatio)
+	}
+
+	sourceAspect := float64(src.Height) / float64(src.Width) * fontRatio
+	targetAspect := float64(height) / float64(width)
+	var targetW, targetH int
+	if fitMode == frame.FitModeCover {
+		if sourceAspect > targetAspect {
+			targetW = width
+			targetH = int(math.Ceil(float64(width) * sourceAspect))
+		} else {
+			targetH = height
+			targetW = int(math.Ceil(float64(height) / sourceAspect))
+		}
+	} else if sourceAspect > targetAspect {
+		targetH = height
+		targetW = int(math.Floor(float64(height) / sourceAspect))
+	} else {
+		targetW = width
+		targetH = int(math.Floor(float64(width) * sourceAspect))
+	}
+	targetW = max(targetW, 1)
+	targetH = max(targetH, 1)
+	resized, err := src.Resize(targetW, targetH, fontRatio)
+	if err != nil {
+		return nil, err
+	}
+	if fitMode == frame.FitModeCover {
+		return resized.Crop((targetW-width)/2, (targetH-height)/2, width, height), nil
+	}
+	return resized, nil
+}
 
 // parseIntParam lee un parámetro entero de la query string; si falta o es
 // inválido devuelve el valor por defecto.

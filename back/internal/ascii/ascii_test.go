@@ -50,10 +50,10 @@ func TestConverter_ConvertFrame(t *testing.T) {
 		t.Fatalf("NewConverter() error = %v", err)
 	}
 
-	blackPixels := [][]color.Color{
+	blackPixels := [][]color.RGBA{
 		{color.RGBA{R: 0, G: 0, B: 0, A: 255}, color.RGBA{R: 0, G: 0, B: 0, A: 255}},
 	}
-	whitePixels := [][]color.Color{
+	whitePixels := [][]color.RGBA{
 		{color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{R: 255, G: 255, B: 255, A: 255}},
 	}
 
@@ -114,7 +114,7 @@ func TestConverter_ConvertFrame(t *testing.T) {
 func TestConvertFrameHD_HalfBlock(t *testing.T) {
 	conv, _ := NewConverter("")
 	// Frame 4×4: fila par=blanco, fila impar=negro → mitad de filas.
-	pixels := [][]color.Color{
+	pixels := [][]color.RGBA{
 		{color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{R: 255, G: 255, B: 255, A: 255}},
 		{color.RGBA{R: 0, G: 0, B: 0, A: 255}, color.RGBA{R: 0, G: 0, B: 0, A: 255}},
 		{color.RGBA{R: 255, G: 0, B: 0, A: 255}, color.RGBA{R: 255, G: 0, B: 0, A: 255}},
@@ -145,9 +145,9 @@ func TestConvertFrameHD_HalfBlock(t *testing.T) {
 func TestConvertFrameHD_Braille(t *testing.T) {
 	conv, _ := NewConverter("")
 	// Frame 8×4: suficiente para producir al menos una celda Braille.
-	pixels := make([][]color.Color, 4)
+	pixels := make([][]color.RGBA, 4)
 	for y := range pixels {
-		pixels[y] = make([]color.Color, 8)
+		pixels[y] = make([]color.RGBA, 8)
 		for x := range pixels[y] {
 			pixels[y][x] = color.RGBA{R: 200, G: 200, B: 200, A: 255}
 		}
@@ -179,5 +179,3 @@ func TestConvertFrameHD_NilError(t *testing.T) {
 		t.Error("expected error for nil frame")
 	}
 }
-
-
