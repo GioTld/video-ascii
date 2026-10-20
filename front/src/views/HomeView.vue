@@ -121,9 +121,40 @@ function onCanvasResize(dimensions: { cols: number; rows: number }) {
   }, 150)
 }
 
+let audioElement: HTMLAudioElement | null = null
+let audioUrl: string | null = null
+const isMuted = ref(false)
+
+function stopAudio() {
+  if (audioElement) {
+    audioElement.pause()
+    audioElement.currentTime = 0
+  }
+}
+
+function cleanupAudio() {
+  stopAudio()
+  if (audioUrl) {
+    URL.revokeObjectURL(audioUrl)
+    audioUrl = null
+  }
+  if (audioElement) {
+    audioElement.src = ''
+    audioElement = null
+  }
+}
+
+function toggleMute() {
+  isMuted.value = !isMuted.value
+  if (audioElement) {
+    audioElement.muted = isMuted.value
+  }
+}
+
 onUnmounted(() => {
   if (resizeTimer) clearTimeout(resizeTimer)
   closeStream()
+  cleanupAudio()
 })
 
 function addLog(text: string, type: LogType = 'info') {
@@ -154,6 +185,7 @@ function closeStream() {
     activeStream.close()
     activeStream = null
   }
+  stopAudio()
 }
 
 function stopStream() {
@@ -168,9 +200,24 @@ function startVideoStream(id: string) {
   terminalRef.value?.reset()
   isProcessing.value = true
 
+  // Start audio playback synchronized with the first incoming frame
+  if (selectedFile.value && isVideo.value) {
+    if (!audioElement) {
+      audioElement = new Audio()
+      audioElement.muted = isMuted.value
+    }
+    if (!audioUrl) {
+      audioUrl = URL.createObjectURL(selectedFile.value)
+      audioElement.src = audioUrl
+    }
+    audioElement.currentTime = 0
+  }
+
   const dims = resolveRenderDims()
   const config = processingConfig(dims.cols, dims.rows)
   let checkedMode = false
+  let audioStarted = false
+
   const source = streamVideo(
     id,
     config,
@@ -184,6 +231,16 @@ function startVideoStream(id: string) {
       }
       if (!hasContent.value) hasContent.value = true
       terminalRef.value?.write(frame)
+
+      // Play audio on first rendered frame so audio and video start together
+      if (!audioStarted && audioElement) {
+        audioStarted = true
+        audioElement.currentTime = 0
+        audioElement.play().catch((err) => {
+          // Autoplay policy or no audio track
+          console.warn('Audio play prevented or unavailable:', err)
+        })
+      }
     },
     () => {
       if (activeStream !== source) return
@@ -404,6 +461,11 @@ watch([preset, selectedFilter, filterAmount, hdMode, renderColorMode, ramp, fitM
             class="term-btn full active"
             @click="stopStream"
           >[■] stop</button>
+          <button
+            class="term-btn full"
+            :class="{ active: !isMuted }"
+            @click="toggleMute"
+          >{{ isMuted ? '[♪] unmute' : '[♪] mute' }}</button>
         </div>
 
         <div class="sidebar-spacer" />
